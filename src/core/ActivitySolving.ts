@@ -196,7 +196,6 @@ export class ActivitySolving {
     // Always navigate to trigger API response for interceptor
     this.logger.debug(`Navigating to: ${this.activity.url}`);
     await this.page.goto(this.activity.url, { waitUntil: 'domcontentloaded' });
-    await this.page.waitForLoadState('networkidle').catch(() => {});
 
     // Session check: if we got redirected to login, session expired
     const nowUrl = this.page.url();
