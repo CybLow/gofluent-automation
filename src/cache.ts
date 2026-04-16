@@ -10,6 +10,6 @@ export function getCachedUrls(): Set<string> {
 
 export function addToCache(urls: string[]): void {
   const existing = getCachedUrls();
-  for (const url of urls) existing.add(url);
+  for (const u of urls) existing.add(u);
   writeFileSync(CACHE_PATH, [...existing].join('\n') + '\n', 'utf-8');
 }

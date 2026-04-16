@@ -1,158 +1,136 @@
-import { BrowserSession } from '../browser/session.js';
-import { Authenticator } from '../browser/auth.js';
-import { urls, type ActivityCategory, type Urls } from '../constants/urls.js';
-import { Activity } from '../core/Activity.js';
-import { ActivitySolving } from '../core/ActivitySolving.js';
-import { ensureLanguage } from '../navigation/profile.js';
-import { dismissModals } from '../navigation/dashboard.js';
-import { scanTrainingPage } from '../navigation/training.js';
-import { discoverActivities } from '../navigation/resources.js';
-import { addToCache, getCachedUrls } from '../services/cache.js';
-import { QuizInterceptor } from '../services/quiz-interceptor.js';
-import type { AppConfig, CLIOptions } from '../types.js';
-import type { Logger } from '../utils/logger.js';
-import type { Page } from 'playwright';
+import chalk from 'chalk';
+import type { ApiClient } from '../api.js';
+import type { Logger } from '../logger.js';
+import type { CLIOptions, ActivityCategory } from '../types.js';
+import { ALL_CATEGORIES } from '../types.js';
+import { discoverActivities } from '../services/discovery.js';
+import { fetchTrainingReport } from '../services/training.js';
+import { solveQuiz } from '../services/quiz.js';
+import { addToCache, getCachedUrls } from '../cache.js';
 
-const ALL_CATEGORIES: ActivityCategory[] = ['vocabulary', 'grammar', 'article', 'video', 'howto'];
 const BATCH_SIZE = 3;
-
-interface RunContext {
-  page: Page;
-  session: BrowserSession;
-  siteUrls: Urls;
-  cachedUrls: Set<string>;
-  interceptor: QuizInterceptor;
-}
+const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 
 export class AutoRunner {
   constructor(
     private readonly options: CLIOptions,
-    private readonly config: AppConfig,
+    private readonly api: ApiClient,
+    private readonly userId: string,
+    private readonly topicUuid: string,
     private readonly logger: Logger,
   ) {}
 
   async execute(): Promise<void> {
-    const siteUrls = urls(this.config.gofluentDomain);
-    const session = new BrowserSession(this.options.headless, this.logger);
-    const page = await session.launch();
+    const report = await fetchTrainingReport(this.api, this.userId, this.topicUuid, this.logger);
 
-    try {
-      const auth = new Authenticator(session, this.config, siteUrls, this.logger);
-      await auth.login();
-      await dismissModals(page, this.logger);
+    const doneUuids = new Set(report.all.map(a => a.contentUuid));
+    if (this.options.cache) addToCache(report.monthly.map(a => a.url));
 
-      const { flagAlt } = await ensureLanguage(page, this.options.language, siteUrls, this.logger);
+    const todoCount = this.calculateTodoCount(report.monthlyValid.length);
+    if (todoCount === 0) return;
 
-      // Scan training page — get scores, cache URLs, count valid (>=80%) activities
-      const report = await scanTrainingPage(page, siteUrls, flagAlt, this.logger);
-      const allUrls = report.monthly.map(a => a.url);
-      if (this.options.cache) addToCache(allUrls);
-
-      // Only count valid activities (>=80%) toward the monthly target
-      const todoCount = this.calculateTodoCount(report.monthlyValid.length);
-      if (todoCount === 0) return;
-
-      const cachedUrls = this.options.cache ? getCachedUrls() : new Set<string>();
-      const interceptor = new QuizInterceptor(this.logger);
-      interceptor.startListening(page);
-      await this.solveActivities({ page, session, siteUrls, cachedUrls, interceptor }, todoCount);
-    } finally {
-      await session.close();
-      this.logger.close();
+    const excluded = new Set<string>(doneUuids);
+    if (this.options.cache) {
+      for (const url of getCachedUrls()) {
+        const m = UUID_RE.exec(url);
+        if (m) excluded.add(m[0].toLowerCase());
+      }
     }
+
+    await this.solveActivities(excluded, todoCount);
   }
 
-  private calculateTodoCount(monthlyCount: number): number {
-    const targetCount = this.options.autoRun ?? 13;
-
+  private calculateTodoCount(monthlyValidCount: number): number {
+    const target = this.options.autoRun ?? 13;
     if (this.options.debug) {
-      this.logger.info(`[DEBUG] ${monthlyCount} done this month, forcing ${targetCount} new activities`);
-      return targetCount;
+      this.logger.info(`Forcing ${target} new activities (debug mode, ${monthlyValidCount} already done this month)`);
+      return target;
     }
-
-    const todo = Math.max(0, targetCount - monthlyCount);
-    this.logger.info(`${monthlyCount}/${targetCount} done this month`);
+    const todo = Math.max(0, target - monthlyValidCount);
     if (todo === 0) {
-      this.logger.success(`Monthly target already met (${monthlyCount}/${targetCount})`);
+      this.logger.success(`Monthly target already met (${monthlyValidCount}/${target})`);
     } else {
-      this.logger.info(`${todo} more activities needed`);
+      this.logger.step(`Need ${todo} more activities (${monthlyValidCount}/${target} done this month)`);
     }
     return todo;
   }
 
-  private async solveActivities(ctx: RunContext, todoCount: number): Promise<void> {
+  private async solveActivities(excluded: Set<string>, todoCount: number): Promise<void> {
     const categories = this.getCategories();
-    this.logger.info(`Categories: ${categories.join(', ')} (rotating every ${BATCH_SIZE})`);
+    this.logger.info(`Categories: ${categories.join(', ')}  |  batch size: ${BATCH_SIZE}  |  goal: ${todoCount}`);
+    console.log('');
 
-    const solved = await this.runCategoryRotation(ctx, categories, todoCount);
-    this.logger.success(`\nDone! Completed ${solved}/${todoCount} activities`);
-  }
-
-  private async runCategoryRotation(ctx: RunContext, categories: ActivityCategory[], todoCount: number): Promise<number> {
     let solved = 0;
+    let attempted = 0;
     let categoryIndex = 0;
-    const exhausted = new Set<string>();
+    const exhausted = new Set<ActivityCategory>();
+    const t0 = Date.now();
 
     while (solved < todoCount && exhausted.size < categories.length) {
       const category = categories[categoryIndex++ % categories.length];
       if (exhausted.has(category)) continue;
 
-      const batch = await this.discoverBatch(ctx, category, todoCount - solved);
+      const batch = await this.discoverBatch(category, excluded, todoCount - solved);
       if (batch.length === 0) { exhausted.add(category); continue; }
 
-      for (const actUrl of batch) {
+      for (const act of batch) {
         if (solved >= todoCount) break;
-        if (await this.solveActivity(ctx, actUrl, category, solved, todoCount)) solved++;
+        attempted++;
+        if (await this.solveOne(act.contentUuid, category, attempted, solved, todoCount, act.title)) solved++;
+        excluded.add(act.contentUuid);
       }
     }
 
-    return solved;
+    console.log('');
+    const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+    const failed = attempted - solved;
+    const suffix = failed > 0 ? ` (${failed} skipped/failed)` : '';
+    if (solved === todoCount) {
+      this.logger.success(chalk.bold(`Completed ${solved}/${todoCount} activities in ${elapsed}s${suffix}`));
+    } else {
+      this.logger.warn(`Stopped at ${solved}/${todoCount} after ${elapsed}s (no more fresh activities${suffix})`);
+    }
   }
 
-  private async discoverBatch(ctx: RunContext, category: ActivityCategory, remaining: number): Promise<string[]> {
-    this.logger.info(`\nSearching ${category} (need ${remaining} more)...`);
+  private async discoverBatch(category: ActivityCategory, excluded: Set<string>, remaining: number) {
     const urls = await discoverActivities(
-      ctx.page, ctx.siteUrls, category, ctx.cachedUrls,
+      this.api, category, this.topicUuid, excluded,
       { minimumLevel: this.options.minimumLevel, maximumLevel: this.options.maximumLevel },
       this.logger,
     );
-    if (urls.length === 0) this.logger.warn(`No ${category} activities left, skipping`);
     return urls.slice(0, Math.min(BATCH_SIZE, remaining));
   }
 
-  private async solveActivity(ctx: RunContext, actUrl: string, category: string, solved: number, todoCount: number): Promise<boolean> {
-    this.logger.info(`\n${'='.repeat(60)}`);
-    this.logger.info(`Activity ${solved + 1}/${todoCount} [${category}]: ${actUrl}`);
-    this.logger.info('='.repeat(60));
+  private async solveOne(
+    contentUuid: string, category: string,
+    attempt: number, solved: number, todoCount: number, title: string,
+  ): Promise<boolean> {
+    const progress = `${solved}/${todoCount}`;
+    const tag = chalk.gray(`[#${String(attempt).padStart(2)} ${progress.padEnd(5)} ${category.padEnd(10)}]`);
+    const name = title ? chalk.white(title) : chalk.dim(contentUuid);
+    process.stdout.write(`  ${tag} ${name.slice(0, 55).padEnd(55)} `);
 
+    const url = `${this.api.base}/app/dashboard/learning/${contentUuid}`;
     try {
-      const activity = new Activity(actUrl);
-      const count = await new ActivitySolving(this.logger, ctx.page, activity, ctx.interceptor).resolveQuiz();
-      if (count > 0) this.logger.success(`Progress: ${solved + 1}/${todoCount}`);
-      this.cacheUrl(ctx, actUrl);
-      return count > 0;
+      const result = await solveQuiz(this.api, contentUuid, this.topicUuid, this.logger);
+      if (this.options.cache) addToCache([url]);
+
+      if (result.skipped) {
+        console.log(chalk.yellow('skipped (no quiz)'));
+        return false;
+      }
+      if (result.score !== null && result.score < 80) {
+        console.log(chalk.red(`failed (${result.score}%)`));
+        return false;
+      }
+      console.log(chalk.green(`${result.score ?? '?'}%  (${result.questionCount}q)`));
+      return true;
     } catch (e) {
-      await this.handleError(e, ctx, actUrl);
+      const msg = String(e instanceof Error ? e.message : e).replace(/\s+/g, ' ').slice(0, 120);
+      console.log(chalk.red(`error: ${msg}`));
+      if (this.options.cache) addToCache([url]);
       return false;
     }
-  }
-
-  private async handleError(e: unknown, ctx: RunContext, actUrl: string): Promise<void> {
-    const msg = String(e);
-    if (msg.includes('SESSION_EXPIRED')) {
-      this.logger.warn('Session expired, re-authenticating...');
-      await new Authenticator(ctx.session, this.config, ctx.siteUrls, this.logger).login();
-    } else if (msg.includes('NO_QUIZ_TAB')) {
-      this.logger.warn('No quiz tab, skipping');
-    } else {
-      this.logger.error(`Activity failed: ${e}`);
-    }
-    this.cacheUrl(ctx, actUrl);
-  }
-
-  private cacheUrl(ctx: RunContext, url: string): void {
-    if (this.options.cache) addToCache([url]);
-    ctx.cachedUrls.add(url);
   }
 
   private getCategories(): ActivityCategory[] {

@@ -1,7 +1,7 @@
 {
   "name": "golfuent_automation",
-  "version": "2.0.0",
-  "description": "GoFluent language learning automation — API interception, 100% score",
+  "version": "3.0.0",
+  "description": "GoFluent language learning automation — HTTP-only API, 100% score, terminal MFA",
   "type": "module",
   "main": "src/index.ts",
   "scripts": {
@@ -13,7 +13,6 @@
   },
   "dependencies": {
     "playwright": "^1.49.0",
-    "cheerio": "^1.0.0",
     "commander": "^12.1.0",
     "chalk": "^5.3.0"
   },

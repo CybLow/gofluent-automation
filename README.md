@@ -1,11 +1,11 @@
 # GoFluent Automation
 
-Automatise les activites de langue sur GoFluent. Intercepte les reponses API pour un score 100% garanti. Aucune IA requise.
+Automatise les activites de langue sur GoFluent via leur API HTTP. Score 100% garanti, aucune IA, aucun scraping DOM. Playwright sert uniquement a l'authentification initiale (SAML + Microsoft MFA).
 
 ## Setup
 
 ```bash
-bun install                  # deps + Chromium
+bun install                  # deps + Chromium pour l'auth
 cp .env.example .env         # remplir les credentials
 bun run auto                 # lancer
 ```
@@ -21,112 +21,132 @@ GOFLUENT_DOMAIN=esaip
 ## Usage
 
 ```bash
-# Faire 13 activites (toutes categories)
-bun run auto
-
-# Faire N activites
-bun src/index.ts --auto-run 5 --language Anglais
-
-# Choisir les categories
-bun src/index.ts --auto-run 13 --vocabulary --grammar
-bun src/index.ts --auto-run 13 --article --video --howto
-
-# Une seule activite par URL
-bun src/index.ts --simple-run <URL> --language Anglais
-
-# Rapport des scores
-bun run report
-
-# Mode debug (logs verbeux)
-bun src/index.ts --auto-run 13 --debug
+bun run auto                                           # 13 activites toutes categories (defaut)
+bun src/index.ts --auto-run 5                          # N activites
+bun src/index.ts --auto-run 13 --vocabulary --grammar  # categories choisies
+bun src/index.ts --simple-run <URL ou UUID>            # une seule activite
+bun run report                                         # rapport de formation
+bun src/index.ts --auto-run 13 --debug                 # logs verbeux
 ```
 
 ### Options
 
 | Flag | Description |
 |------|-------------|
-| `--auto-run <N>` | Faire N nouvelles activites |
-| `--simple-run <URL>` | Faire une activite par URL |
-| `--report` | Rapport de formation (scores, stats) |
+| `--auto-run <N>` | Faire N nouvelles activites (defaut 13) |
+| `--simple-run <URL\|UUID>` | Faire une activite precise |
+| `--report` | Rapport de formation (scores, stats, historique) |
 | `--vocabulary` | Categorie vocabulaire |
 | `--grammar` | Categorie grammaire |
 | `--article` | Categorie articles |
 | `--video` | Categorie videos |
-| `--howto` | Categorie howto/guides |
+| `--howto` | Categorie guides pratiques |
 | `--language <nom>` | Langue (defaut: Anglais) |
-| `--no-headless` | Afficher le browser |
-| `--no-cache` | Ignorer le cache |
-| `--debug` | Logs verbeux |
 | `--minimum-level <A1-C2>` | Niveau CEFR minimum |
 | `--maximum-level <A1-C2>` | Niveau CEFR maximum |
+| `--no-cache` | Ignorer le cache d'URLs deja faites |
+| `--profile <nom>` | Profil de credentials (suffixe `__NOM` dans .env) |
+| `--debug` | Logs verbeux (GET/POST, states) |
 
 ## Fonctionnement
 
-Intercepte les reponses JSON de l'API GoFluent (`/content-service/quiz/`) qui contiennent les solutions. Chaque question est resolue par index — la question N du DOM correspond a la reponse N du JSON.
+L'app parle directement aux endpoints API de GoFluent — pas de browser apres l'auth. Les quiz sont resolus en envoyant `isCorrect: true, score: 1` avec les `solutions` extraites du JSON que le serveur renvoie lui-meme.
 
 - **Score** : 100% garanti
-- **Vitesse** : ~3 secondes par activite
-- **Dependencies** : Playwright + Chromium uniquement
-- **Aucune cle API** requise (pas d'IA, pas de Whisper)
+- **Vitesse** : ~1.5s par activite, ~20s pour 13
+- **Startup** : <1s apres le premier login (cache JWT)
+- **Pas de scraping** : discovery, report, quiz — tout en HTTP pur
 
 ### Flow
 
-1. Connexion SAML + Microsoft (MFA supportee, browser visible la premiere fois)
-2. Scan de la training page (scores, activites valides >=80%)
-3. Decouverte d'activites par categorie avec rotation (3 par batch)
-4. Pour chaque activite : interception API → resolution quiz → cache
-5. Retake automatique si score < 80%
+1. **Auth** (premier run, ~10s) : Playwright headless ouvre la page de login, rempli email + password automatiquement, affiche le code MFA dans le terminal pour validation sur ton tel, capture le Bearer token dans les headers
+2. **Cache JWT** : token + exp sauve dans `data/auth/token.json` → prochains runs sans Playwright
+3. **Training report** (`GET /api/v1/report/learner/{userId}/activities`) : historique complet (jusqu'a 2 ans)
+4. **Discovery** (`POST /api/v1/content-service/content/search`) : toutes les activites par categorie, paginees, filtrage CEFR serveur-side
+5. **Quiz solving** par activite :
+   - `GET /content-service/content/{uuid}` -> extrait quizRef
+   - `GET /content-service/quiz/legacy/{quizRef}` -> JSON avec questions + solutions
+   - `POST /quiz-state/quiz/` -> stateId
+   - `POST /quiz-state/quiz/state/{stateId}/answer` par question (N fois)
+   - Score final recupere via `/quiz-state/quiz/state/quiz/{quizId}`
+
+Invalidation auto du token cache si l'API retourne 401/403.
+
+## Authentification en terminal
+
+Premiere connexion :
+
+```
+→ Opening headless browser for first login…
+→ Submitting SAML domain…
+→ Entering email…
+→ Entering password…
+
+  MFA  Tap this number in your Authenticator app:  86
+  (waiting for your approval…)
+
+✓ Signed in (user: 91a82e46)
+```
+
+Aucune fenetre ne s'ouvre. Le code MFA est scrape depuis la page Microsoft (`#idRichContext_DisplaySign`) et affiche en gros dans le terminal. Tu tape le meme chiffre dans ton Authenticator -> le token est capture, sauve, browser ferme.
+
+Runs suivants : `✓ Session reused (user: ...)` en <1s, pas de Playwright.
+
+Le browser utilise le Chrome/Edge installe sur ton systeme via `channel: 'chrome'` (fallback Chromium bundled).
 
 ## Categories
 
-| Categorie | Flag | Contenu |
-|-----------|------|---------|
-| vocabulary | `--vocabulary` | Vocabulaire thematique |
-| grammar | `--grammar` | Exercices de grammaire |
-| article | `--article` | Comprehension d'articles |
-| video | `--video` | Comprehension video |
-| howto | `--howto` | Guides pratiques |
+| Categorie | Flag | targetType API |
+|-----------|------|----------------|
+| vocabulary | `--vocabulary` | `glossary` |
+| grammar | `--grammar` | `rules` |
+| article | `--article` | `article` |
+| video | `--video` | `video` |
+| howto | `--howto` | `practical-guide` |
 
-Sans flag = toutes les categories en rotation.
+Sans flag = toutes les categories en rotation (`BATCH_SIZE=3` activites par categorie avant de passer a la suivante).
 
-## Types de questions (9)
+## Types de questions (verifies a 100%)
 
-Tous geres automatiquement via l'interception API :
+| Type API | Extraction des solutions |
+|----------|--------------------------|
+| MULTIPLE_CHOICE / TEXT_CHOICES | `q.solutions` direct |
+| TRUE_OR_FALSE (2 sous-types) | `q.solutions` direct |
+| FILL_IN_THE_GAP / FITG_TEXT_BLOCKS | `q.receivers[].solutions` |
+| MATCHING_TYPE | `q.receivers[].solutions` |
+| SCRAMBLED_SENTENCE | `q.receivers[].solutions` |
+| SCRAMBLED_LETTERS | `q.receivers[].solutions` |
 
-1. Multi-choix texte
-2. Multi-choix image
-3. Multi-choix checkbox (multi-select)
-4. Texte libre
-5. Trous a remplir (input)
-6. Trous a remplir (blocs drag & drop)
-7. Lettres melangees
-8. Phrases melangees
-9. Association (match)
+Le flow est type-agnostic : `q.solutions ?? q.receivers?.flatMap(r => r.solutions)` + `isCorrect: true, score: 1` pour chaque reponse.
 
 ## Architecture
 
 ```
 src/
-  index.ts                 CLI
-  config.ts                .env
-  types.ts                 Types
-  browser/
-    session.ts             Playwright + session persistee
-    auth.ts                Login SAML + Microsoft + MFA
-  core/
-    Activity.ts            Modele de donnees
-    ActivitySolving.ts     Boucle quiz + retake
-  questions/               9 types (factory pattern)
+  index.ts              CLI (commander)
+  config.ts             .env + siteBase
+  types.ts              CLIOptions, CEFR, categories, ActivityInfo
+  logger.ts             Logger colore + fichier
+  auth.ts               Playwright headless + MFA terminal + cache JWT
+  api.ts                Fetch wrapper (GET/POST, invalide cache sur 401)
+  cache.ts              data/cache.txt
   services/
-    quiz-interceptor.ts    Interception API → reponses directes
-    cache.ts               Cache fichier des URLs
-  navigation/              Profil, training, resources, scroll
+    topic.ts            Resolution langue -> topicUuid
+    training.ts         /report/learner/activities
+    discovery.ts        /content-service/content/search paginated
+    quiz.ts             Load + solve + retake
   runners/
-    AutoRunner.ts          Mode auto (N activites)
-    SimpleRunner.ts        Mode simple (1 URL)
-    ReportRunner.ts        Rapport de formation
+    AutoRunner.ts       Rotation categories, BATCH_SIZE=3
+    SimpleRunner.ts     Une activite par URL/UUID
+    ReportRunner.ts     Stats + distribution + historique
+
+data/
+  auth/
+    storage-state.json  Cookies/localStorage Playwright (pour re-auth quand JWT expire)
+    token.json          JWT + userId + exp (cache lu en priorite)
+  cache.txt             URLs deja faites (une par ligne)
 ```
 
 ## Premiere connexion
 
-Le browser s'ouvre automatiquement (visible) la premiere fois pour le MFA Microsoft. La session est sauvegardee dans `data/auth/storage-state.json` — les connexions suivantes sont headless.
+Aucune fenetre browser — tout en terminal. Le code MFA s'affiche en jaune, tu valides sur ton phone, c'est parti. Les connexions suivantes reutilisent le JWT cache (<1s startup).

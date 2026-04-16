@@ -1,42 +1,29 @@
-import { BrowserSession } from '../browser/session.js';
-import { Authenticator } from '../browser/auth.js';
-import { urls } from '../constants/urls.js';
-import { scanTrainingPage, type ActivityInfo } from '../navigation/training.js';
-import { ensureLanguage } from '../navigation/profile.js';
-import type { AppConfig, CLIOptions } from '../types.js';
-import type { Logger } from '../utils/logger.js';
 import chalk from 'chalk';
+import type { ApiClient } from '../api.js';
+import type { Logger } from '../logger.js';
+import type { ActivityInfo, CLIOptions } from '../types.js';
+import { fetchTrainingReport } from '../services/training.js';
 
 export class ReportRunner {
   constructor(
     private readonly options: CLIOptions,
-    private readonly config: AppConfig,
+    private readonly api: ApiClient,
+    private readonly userId: string,
+    private readonly topicUuid: string,
     private readonly logger: Logger,
   ) {}
 
   async execute(): Promise<void> {
-    const siteUrls = urls(this.config.gofluentDomain);
-    const session = new BrowserSession(true, this.logger);
-    const page = await session.launch();
+    const report = await fetchTrainingReport(this.api, this.userId, this.topicUuid, this.logger);
+    this.printReport(report.all, report.monthlyValid, report.monthlyFailed);
+  }
 
-    try {
-      const auth = new Authenticator(session, this.config, siteUrls, this.logger);
-      await auth.login();
-
-      const { flagAlt } = await ensureLanguage(page, this.options.language, siteUrls, this.logger);
-      const report = await scanTrainingPage(page, siteUrls, flagAlt, this.logger);
-      this.printReport(report.all, report.monthlyValid, report.monthlyFailed);
-    } finally {
-      await session.close();
-      this.logger.close();
-    }
+  private fmtDate(d: Date): string {
+    return d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
   }
 
   private printReport(all: ActivityInfo[], valid: ActivityInfo[], failed: ActivityInfo[]): void {
-    if (all.length === 0) {
-      console.log(chalk.yellow('No activities found.'));
-      return;
-    }
+    if (all.length === 0) { console.log(chalk.yellow('No activities found.')); return; }
 
     const now = new Date();
     const monthly = all.filter(a => a.date.getMonth() === now.getMonth() && a.date.getFullYear() === now.getFullYear());
@@ -66,7 +53,6 @@ export class ReportRunner {
     console.log(chalk.bold('  Failed <80%: ') + (failed.length > 0 ? chalk.red(`${failed.length}`) : '0'));
     console.log(chalk.bold('  Target:     ') + `${valid.length}/13`);
 
-    // Score distribution for valid
     const perfect = valid.filter(a => a.score === 100);
     const good = valid.filter(a => a.score! >= 80 && a.score! < 100);
     console.log('');
@@ -74,7 +60,6 @@ export class ReportRunner {
     console.log(chalk.green(`  100%:    ${perfect.length}`));
     console.log(chalk.blue(`  80-99%:  ${good.length}`));
 
-    // Activities below 80%
     if (failed.length > 0) {
       console.log('');
       console.log(chalk.bold(chalk.red('Need improvement (<80%):')));
@@ -84,7 +69,6 @@ export class ReportRunner {
       if (failed.length > 10) console.log(chalk.gray(`  ... and ${failed.length - 10} more`));
     }
 
-    // Recent valid activities
     console.log('');
     console.log(chalk.bold('Recent valid activities:'));
     for (const a of valid.slice(0, 15)) {
@@ -93,9 +77,5 @@ export class ReportRunner {
     }
     if (valid.length > 15) console.log(chalk.gray(`  ... and ${valid.length - 15} more`));
     console.log('');
-  }
-
-  private fmtDate(d: Date): string {
-    return d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
   }
 }
