@@ -42,12 +42,14 @@ export class SimpleRunner {
       this.logger.info(`Solving activity: ${activityUrl}`);
       const activity = new Activity(activityUrl);
 
-      const learning = new ActivityLearning(this.logger, page, activity);
-      await learning.retrieveActivityData();
-
       const interceptor = new QuizInterceptor(this.logger);
       const useApi = !this.options.noApi;
       if (useApi) interceptor.startListening(page);
+
+      // Skip learning extraction in API mode
+      if (!useApi) {
+        await new ActivityLearning(this.logger, page, activity).retrieveActivityData();
+      }
       const solving = new ActivitySolving(this.logger, page, activity, this.config, interceptor, useApi);
       await solving.resolveQuiz();
 

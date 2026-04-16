@@ -129,8 +129,12 @@ export class AutoRunner {
 
     try {
       const activity = new Activity(actUrl);
-      await new ActivityLearning(this.logger, ctx.page, activity).retrieveActivityData();
-      const count = await new ActivitySolving(this.logger, ctx.page, activity, this.config, ctx.interceptor, !this.options.noApi).resolveQuiz();
+      const useApi = !this.options.noApi;
+      // Skip learning extraction in API mode (answers come from API, not context)
+      if (!useApi) {
+        await new ActivityLearning(this.logger, ctx.page, activity).retrieveActivityData();
+      }
+      const count = await new ActivitySolving(this.logger, ctx.page, activity, this.config, ctx.interceptor, useApi).resolveQuiz();
       if (count > 0) this.logger.success(`Progress: ${solved + 1}/${todoCount}`);
       this.cacheUrl(ctx, actUrl);
       return count > 0;
