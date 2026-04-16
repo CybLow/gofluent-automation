@@ -17,9 +17,7 @@ export class ScrambledLettersQuestion extends Question {
   }
 
   async submitAnswer(values: string[]): Promise<void> {
-    // API returns ["C","O","M","B","I","N","E","D"] (individual chars)
-    // AI returns ["COMBINED"] (single word)
-    // Handle both: if all values are single chars, use them directly; otherwise split the word
+    // API returns individual chars ["C","O","M","B","I","N","E","D"] or a single word ["COMBINED"]
     const chars = values.every(v => v.length <= 1)
       ? values.map(v => v.toUpperCase())
       : [...(values[0] ?? '').toUpperCase()];
