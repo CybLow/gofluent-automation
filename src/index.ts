@@ -3,6 +3,7 @@ import { loadConfig } from './config.js';
 import { Logger } from './utils/logger.js';
 import { AutoRunner } from './runners/AutoRunner.js';
 import { SimpleRunner } from './runners/SimpleRunner.js';
+import { ReportRunner } from './runners/ReportRunner.js';
 import type { CLIOptions, CEFRLevel } from './types.js';
 
 const program = new Command()
@@ -13,6 +14,7 @@ const program = new Command()
 program
   .option('--auto-run <count>', 'Number of activities to complete this month', (v: string) => Number.parseInt(v, 10))
   .option('--simple-run <url>', 'Solve a single activity by URL')
+  .option('--report', 'Show training report (scores, stats, history)')
   .option('--vocabulary', 'Target vocabulary activities')
   .option('--grammar', 'Target grammar activities')
   .option('--language <name>', 'Learning language (e.g., Anglais, Espagnol)', 'Anglais')
@@ -55,7 +57,10 @@ async function main() {
   logger.info(`Language: ${options.language}`);
 
   try {
-    if (options.autoRun !== undefined) {
+    if (opts.report) {
+      const runner = new ReportRunner(options, config, logger);
+      await runner.execute();
+    } else if (options.autoRun !== undefined) {
       const runner = new AutoRunner(options, config, logger);
       await runner.execute();
     } else if (options.simpleRun) {
