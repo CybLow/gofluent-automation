@@ -16,15 +16,20 @@ export class BrowserSession {
   ) {}
 
   async launch(): Promise<Page> {
-    this.browser = await chromium.launch({
-      headless: this.headless,
-      args: ['--disable-blink-features=AutomationControlled'],
-    });
-
     const hasStoredState = existsSync(STORAGE_STATE_PATH);
-    if (hasStoredState) {
+
+    // Force visible browser on first login (MFA needs user interaction)
+    const headless = hasStoredState ? this.headless : false;
+    if (!hasStoredState) {
+      this.logger.info('No saved session — opening browser for first login (MFA may be required)');
+    } else {
       this.logger.debug('Loading stored session state');
     }
+
+    this.browser = await chromium.launch({
+      headless,
+      args: ['--disable-blink-features=AutomationControlled'],
+    });
 
     this.context = await this.browser.newContext(
       hasStoredState ? { storageState: STORAGE_STATE_PATH } : {},
