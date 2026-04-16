@@ -2,7 +2,6 @@ import { BrowserSession } from '../browser/session.js';
 import { Authenticator } from '../browser/auth.js';
 import { urls, type ActivityCategory, type Urls } from '../constants/urls.js';
 import { Activity } from '../core/Activity.js';
-import { ActivityLearning } from '../core/ActivityLearning.js';
 import { ActivitySolving } from '../core/ActivitySolving.js';
 import { ensureLanguage } from '../navigation/profile.js';
 import { dismissModals } from '../navigation/dashboard.js';
@@ -55,8 +54,7 @@ export class AutoRunner {
 
       const cachedUrls = this.options.cache ? getCachedUrls() : new Set<string>();
       const interceptor = new QuizInterceptor(this.logger);
-      const useApi = !this.options.noApi;
-      if (useApi) interceptor.startListening(page);
+      interceptor.startListening(page);
       await this.solveActivities({ page, session, siteUrls, cachedUrls, interceptor }, todoCount);
     } finally {
       await session.close();
@@ -129,12 +127,7 @@ export class AutoRunner {
 
     try {
       const activity = new Activity(actUrl);
-      const useApi = !this.options.noApi;
-      // Skip learning extraction in API mode (answers come from API, not context)
-      if (!useApi) {
-        await new ActivityLearning(this.logger, ctx.page, activity).retrieveActivityData();
-      }
-      const count = await new ActivitySolving(this.logger, ctx.page, activity, this.config, ctx.interceptor, useApi).resolveQuiz();
+      const count = await new ActivitySolving(this.logger, ctx.page, activity, ctx.interceptor).resolveQuiz();
       if (count > 0) this.logger.success(`Progress: ${solved + 1}/${todoCount}`);
       this.cacheUrl(ctx, actUrl);
       return count > 0;

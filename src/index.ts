@@ -24,7 +24,6 @@ program
   .option('--debug', 'Enable verbose logging', false)
   .option('--no-headless', 'Show browser window (default: headless)')
   .option('--no-cache', 'Disable activity URL caching')
-  .option('--no-api', 'Disable API answer interception (force AI mode)')
   .option('--profile <name>', 'Credential profile name from .env')
   .option('--minimum-level <level>', 'Minimum CEFR level (A1-C2)')
   .option('--maximum-level <level>', 'Maximum CEFR level (A1-C2)');
@@ -48,7 +47,6 @@ const options: CLIOptions = {
   profile: opts.profile,
   minimumLevel: opts.minimumLevel as CEFRLevel | undefined,
   maximumLevel: opts.maximumLevel as CEFRLevel | undefined,
-  noApi: opts.api === false,
 };
 
 async function main() {
@@ -56,27 +54,17 @@ async function main() {
   const config = loadConfig(options.profile);
 
   logger.info('GoFluent Automation starting...');
-  const modeLabel = options.autoRun === undefined
-    ? `simple-run (${options.simpleRun})`
-    : `auto-run (${options.autoRun})`;
-  logger.info(`Mode: ${modeLabel}`);
-  logger.info(`Language: ${options.language}`);
 
   try {
     if (opts.report) {
-      const runner = new ReportRunner(options, config, logger);
-      await runner.execute();
+      await new ReportRunner(options, config, logger).execute();
     } else if (options.autoRun !== undefined) {
-      const runner = new AutoRunner(options, config, logger);
-      await runner.execute();
+      await new AutoRunner(options, config, logger).execute();
     } else if (options.simpleRun) {
-      const runner = new SimpleRunner(options, config, logger);
-      await runner.execute();
+      await new SimpleRunner(options, config, logger).execute();
     } else {
-      // Default: auto-run 13 activities
       options.autoRun = 13;
-      const runner = new AutoRunner(options, config, logger);
-      await runner.execute();
+      await new AutoRunner(options, config, logger).execute();
     }
   } catch (e) {
     logger.error(`Fatal error: ${e}`);
@@ -84,10 +72,6 @@ async function main() {
   }
 }
 
-// Handle graceful shutdown
-process.on('SIGINT', () => {
-  console.log('\nInterrupted. Shutting down...');
-  process.exit(0);
-});
+process.on('SIGINT', () => { console.log('\nShutting down...'); process.exit(0); });
 
 await main();

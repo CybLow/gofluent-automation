@@ -2,10 +2,7 @@ import type { Page } from 'playwright';
 import { writeFileSync } from 'node:fs';
 import { SELECTORS } from '../constants/selectors.js';
 import { Question } from '../questions/Question.js';
-import { getAiAnswer } from '../services/ai.js';
-import { transcribeAudioFromElement } from '../services/audio.js';
 import { QuizInterceptor } from '../services/quiz-interceptor.js';
-import type { AppConfig, CLIOptions } from '../types.js';
 import type { Activity } from './Activity.js';
 import type { Logger } from '../utils/logger.js';
 
@@ -13,22 +10,17 @@ const S = SELECTORS;
 
 export class ActivitySolving {
   private retakeCount = 0;
-  private readonly insertableAudioContext: string[] = [];
 
   constructor(
     private readonly logger: Logger,
     private readonly page: Page,
     private readonly activity: Activity,
-    private readonly config: AppConfig,
     private readonly interceptor: QuizInterceptor,
-    private readonly useApi: boolean = true,
   ) {}
 
   async resolveQuiz(): Promise<number> {
     this.logger.info('Resolving the quiz...');
     for (const q of this.activity.questions) q.cacheUsed = false;
-    // Always reset — new activity clears answers, retake also clears because
-    // loadActivityPageAndTab triggers a new API response that rebuilds the list
     this.interceptor.resetForNewActivity();
 
     const ready = await this.initQuiz();
@@ -77,7 +69,8 @@ export class ActivitySolving {
       const pageType = await this.detectPageType();
 
       if (pageType === 'insertable') {
-        await this.handleInsertablePage();
+        this.logger.debug('Insertable page — skipping');
+        await this.clickNext();
         errors = 0;
       } else if (pageType === 'question') {
         const ok = await this.handleQuestionSafe();
@@ -129,23 +122,13 @@ export class ActivitySolving {
     ]).catch(() => {});
   }
 
-  /**
-   * Detect what type of page is currently displayed in the quiz.
-   */
   private async detectPageType(): Promise<'question' | 'insertable' | 'unknown'> {
-    // Check for actual question
     const question = this.page.locator(S.QUIZ.QUESTION);
-    if (await question.isVisible({ timeout: 1_000 }).catch(() => false)) {
-      return 'question';
-    }
+    if (await question.isVisible({ timeout: 1_000 }).catch(() => false)) return 'question';
 
-    // Check for insertable/info page
     const insertable = this.page.locator(S.QUIZ.INSERTABLE_PAGE);
-    if (await insertable.isVisible({ timeout: 1_000 }).catch(() => false)) {
-      return 'insertable';
-    }
+    if (await insertable.isVisible({ timeout: 1_000 }).catch(() => false)) return 'insertable';
 
-    // Wait a bit longer for either to appear
     try {
       await Promise.race([
         question.waitFor({ state: 'visible', timeout: 5_000 }),
@@ -160,50 +143,15 @@ export class ActivitySolving {
     return 'unknown';
   }
 
-  /**
-   * Handle an insertable page (informational page with audio/text).
-   * Capture audio transcription and text as context, then advance.
-   */
-  private async handleInsertablePage(): Promise<void> {
-    const insertable = this.page.locator(S.QUIZ.INSERTABLE_PAGE);
-    this.logger.info('Insertable page detected — capturing context...');
-
-    // Capture text content
-    const textContent = (await insertable.textContent())?.trim() ?? '';
-    if (textContent) {
-      this.insertableAudioContext.push(`[Page content]: ${textContent}`);
-      this.logger.debug(`Captured text: ${textContent.slice(0, 100)}...`);
-    }
-
-    // Capture audio only in AI mode (API mode doesn't need audio context)
-    if (!this.useApi) {
-      const audioTranscript = await transcribeAudioFromElement(
-        this.page, insertable, this.config, this.logger,
-      );
-      if (audioTranscript) {
-        this.insertableAudioContext.push(`[Audio transcription]: ${audioTranscript}`);
-      }
-    }
-
-    // Click Next to advance past the insertable page
-    await this.clickNext();
-  }
-
-  /**
-   * Navigate to the activity page and switch to the quiz tab.
-   */
   private async loadActivityPageAndTab(): Promise<void> {
-    // Always navigate to trigger API response for interceptor
     this.logger.debug(`Navigating to: ${this.activity.url}`);
     await this.page.goto(this.activity.url, { waitUntil: 'domcontentloaded' });
 
-    // Session check: if we got redirected to login, session expired
     const nowUrl = this.page.url();
     if (nowUrl.includes('samlconnector') || nowUrl.includes('login.microsoftonline')) {
       throw new Error('SESSION_EXPIRED');
     }
 
-    // Wait for nav tabs
     try {
       await this.page.locator(S.NAV.TABS).waitFor({ timeout: 30_000 });
     } catch {
@@ -211,23 +159,15 @@ export class ActivitySolving {
       throw new Error('Navigation tabs not found');
     }
 
-    // Dismiss modals before clicking tab
     await this.dismissModals();
 
-    // Check quiz tab exists
     const quizTab = this.page.locator(S.NAV.QUIZ_TAB);
-    if (await quizTab.count() === 0) {
-      throw new Error('NO_QUIZ_TAB');
-    }
+    if (await quizTab.count() === 0) throw new Error('NO_QUIZ_TAB');
 
-    try {
-      await quizTab.click();
-    } catch {
-      await quizTab.click({ force: true });
-    }
+    try { await quizTab.click(); }
+    catch { await quizTab.click({ force: true }); }
 
     this.logger.debug('Switched to quiz tab');
-    // Wait for quiz content to load instead of fixed timer
     await Promise.race([
       this.page.locator(S.QUIZ.CONTAINER).waitFor({ state: 'visible', timeout: 10_000 }),
       this.page.locator(S.QUIZ.QUIZ_CONTAINER_NEW).waitFor({ state: 'visible', timeout: 10_000 }),
@@ -235,18 +175,8 @@ export class ActivitySolving {
   }
 
   private async waitForQuizContainer(): Promise<boolean> {
-    // Try the #quiz selector first
-    try {
-      await this.page.locator(S.QUIZ.CONTAINER).waitFor({ timeout: 10_000 });
-      return true;
-    } catch { /* not found */ }
-
-    // Try the new quiz container class
-    try {
-      await this.page.locator(S.QUIZ.QUIZ_CONTAINER_NEW).waitFor({ timeout: 5_000 });
-      return true;
-    } catch { /* not found */ }
-
+    try { await this.page.locator(S.QUIZ.CONTAINER).waitFor({ timeout: 10_000 }); return true; } catch { /* */ }
+    try { await this.page.locator(S.QUIZ.QUIZ_CONTAINER_NEW).waitFor({ timeout: 5_000 }); return true; } catch { /* */ }
     return false;
   }
 
@@ -257,15 +187,14 @@ export class ActivitySolving {
         await skipBtn.click();
         await skipBtn.waitFor({ state: 'hidden', timeout: 2_000 }).catch(() => {});
       }
-    } catch { /* no modal */ }
-
+    } catch { /* */ }
     try {
       const backdrop = this.page.locator(S.DASHBOARD.MODAL_BACKDROP);
       if (await backdrop.isVisible({ timeout: 1_000 })) {
         await backdrop.click({ force: true });
         await backdrop.waitFor({ state: 'hidden', timeout: 2_000 }).catch(() => {});
       }
-    } catch { /* no backdrop */ }
+    } catch { /* */ }
   }
 
   private async handleQuestion(): Promise<void> {
@@ -276,7 +205,6 @@ export class ActivitySolving {
     if (!question) {
       const html = await questionContainer.innerHTML().catch(() => 'N/A');
       writeFileSync('debug_unknown_question.html', html, 'utf-8');
-      this.logger.error('Unknown question type. Dumped to debug_unknown_question.html');
       throw new Error('Unknown question type');
     }
 
@@ -284,8 +212,8 @@ export class ActivitySolving {
     const questionStr = await question.asText();
     this.logger.debug(`Question: ${questionStr.slice(0, 120)}...`);
 
-    // Always consume API index to stay in sync (even for skipped/cached questions)
-    const apiAnswer = this.useApi ? this.interceptor.getNextAnswer() : null;
+    // Consume API answer (always, to keep index in sync)
+    const apiAnswer = this.interceptor.getNextAnswer();
 
     const cached = this.activity.getQuestion(questionStr);
     let answers: string[];
@@ -297,18 +225,14 @@ export class ActivitySolving {
     } else if (apiAnswer) {
       this.logger.info(`[API] ${JSON.stringify(apiAnswer).slice(0, 150)}`);
       answers = apiAnswer;
-    } else if (question.skipCompletion) {
-      answers = ['SKIP'];
     } else {
-      // AI fallback
-      answers = await this.askAi(questionStr, question.type, questionContainer);
+      answers = ['SKIP'];
+      this.logger.warn('No API answer available, skipping question');
     }
 
-    // Submit and get correct answer
     const correctAnswer = await question.answer(answers);
     this.logger.debug(`Correct answer: ${JSON.stringify(correctAnswer)}`);
 
-    // Cache
     if (cached) {
       cached.correctAnswer = correctAnswer;
     } else {
@@ -322,23 +246,11 @@ export class ActivitySolving {
     }
   }
 
-  private async askAi(questionStr: string, questionType: import('../types.js').QuestionType, container: import('playwright').Locator): Promise<string[]> {
-    const extra = this.insertableAudioContext.length > 0 ? this.insertableAudioContext.join('\n') + '\n\n' : '';
-    const audio = await transcribeAudioFromElement(this.page, container, this.config, this.logger);
-    const prefix = audio ? `[Audio]: ${audio}\n\n` : '';
-
-    this.logger.info('[AI] Waiting for response...');
-    const answers = await getAiAnswer(this.config, this.logger, this.activity.asMarkdown(), extra + prefix + questionStr, questionType);
-    this.logger.info(`[AI] ${JSON.stringify(answers).slice(0, 150)}`);
-    return answers;
-  }
-
   private async clickNext(): Promise<void> {
     const nextButton = this.page.locator(S.QUIZ.NEXT);
     try {
       await nextButton.waitFor({ state: 'visible', timeout: 5_000 });
       await nextButton.click({ force: true });
-      // Wait for next button to disappear (= page is transitioning)
       await nextButton.waitFor({ state: 'hidden', timeout: 3_000 }).catch(() => {});
     } catch {
       const submitBtn = this.page.locator(S.QUIZ.SUBMIT);
@@ -370,8 +282,7 @@ export class ActivitySolving {
 
   private async getScore(): Promise<number | null> {
     const scoreElements = this.page.locator(S.QUIZ.SCORE);
-    const count = await scoreElements.count();
-    for (let i = 0; i < count; i++) {
+    for (let i = 0; i < await scoreElements.count(); i++) {
       const text = (await scoreElements.nth(i).textContent())?.trim();
       if (text) {
         const match = /(\d+)\s*%/.exec(text);
@@ -394,10 +305,8 @@ export class ActivitySolving {
     this.logger.info(`Score ${score}% < ${expectedScore}%, retaking (${this.retakeCount}/${maxRetakes})`);
     try {
       await this.page.locator(S.QUIZ.RETAKE).click();
-      // Wait for end page to disappear (quiz is resetting)
       await this.page.locator(S.QUIZ.END_PAGE).waitFor({ state: 'hidden', timeout: 5_000 }).catch(() => {});
       await this.page.locator(S.QUIZ.SCORE).waitFor({ state: 'hidden', timeout: 5_000 }).catch(() => {});
-      // Then wait for first quiz content
       await this.waitForQuizContent();
       await this.resolveQuiz();
     } catch (e) {
