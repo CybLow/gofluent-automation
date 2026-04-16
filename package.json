@@ -7,9 +7,11 @@
   "scripts": {
     "postinstall": "bunx playwright install chromium",
     "start": "bun src/index.ts",
-    "auto": "bun src/index.ts --auto-run 13 --language Anglais",
+    "auto": "bun src/index.ts",
     "simple": "bun src/index.ts --simple-run",
-    "report": "bun src/index.ts --report --language Anglais"
+    "report": "bun src/index.ts --report",
+    "test": "bun test",
+    "typecheck": "bunx tsc --noEmit"
   },
   "dependencies": {
     "playwright": "^1.49.0",

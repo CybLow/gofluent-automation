@@ -9,8 +9,7 @@ yarn-error.log*
 .pnp.js
 .vscode/*
 .env
-data/auth/
+data/
 logs/
-cache.txt
 .DS_Store
 .idea/

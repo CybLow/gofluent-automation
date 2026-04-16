@@ -1,139 +1,146 @@
 import chalk from 'chalk';
-import type { ApiClient } from '../api.js';
-import type { Logger } from '../logger.js';
-import type { CLIOptions, ActivityCategory } from '../types.js';
-import { ALL_CATEGORIES } from '../types.js';
-import { discoverActivities } from '../services/discovery.js';
-import { fetchTrainingReport } from '../services/training.js';
-import { solveQuiz } from '../services/quiz.js';
-import { addToCache, getCachedUrls } from '../cache.js';
+import { BATCH_SIZE, MIN_VALID_SCORE, UUID_REGEX } from '@/constants';
+import type { ILogger } from '@/infra/logging/ILogger';
+import type { IUrlCacheRepo } from '@/infra/persistence/IUrlCacheRepo';
+import { ProgressTracker } from '@/reporting/ProgressTracker';
+import type { DiscoverOptions, IActivityDiscovery } from '@/services/activities/IActivityDiscovery';
+import type { IQuizSolver } from '@/services/quiz/IQuizSolver';
+import type { ITrainingReportService } from '@/services/training/ITrainingReportService';
+import { ALL_CATEGORIES, type ActivityCategory } from '@/types/activity';
+import type { DiscoveredActivity } from '@/types/report';
+import type { AutoOptions } from '@/types/options';
+import type { IRunner } from './IRunner';
 
-const BATCH_SIZE = 3;
-const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+interface SolveLoopState {
+  solved: number;
+  attempted: number;
+  categoryIndex: number;
+  exhausted: Set<ActivityCategory>;
+}
 
-export class AutoRunner {
+export class AutoRunner implements IRunner {
   constructor(
-    private readonly options: CLIOptions,
-    private readonly api: ApiClient,
-    private readonly userId: string,
-    private readonly topicUuid: string,
-    private readonly logger: Logger,
+    private readonly training: ITrainingReportService,
+    private readonly discovery: IActivityDiscovery,
+    private readonly quiz: IQuizSolver,
+    private readonly urlCache: IUrlCacheRepo,
+    private readonly siteBase: string,
+    private readonly logger: ILogger,
+    private readonly options: AutoOptions,
   ) {}
 
   async execute(): Promise<void> {
-    const report = await fetchTrainingReport(this.api, this.userId, this.topicUuid, this.logger);
-
+    const report = await this.training.fetch();
     const doneUuids = new Set(report.all.map(a => a.contentUuid));
-    if (this.options.cache) addToCache(report.monthly.map(a => a.url));
 
-    const todoCount = this.calculateTodoCount(report.monthlyValid.length);
+    if (this.options.cache) this.urlCache.add(report.monthly.map(a => a.url));
+
+    const todoCount = this.computeTodoCount(report.monthlyValid.length);
     if (todoCount === 0) return;
 
-    const excluded = new Set<string>(doneUuids);
-    if (this.options.cache) {
-      for (const url of getCachedUrls()) {
-        const m = UUID_RE.exec(url);
-        if (m) excluded.add(m[0].toLowerCase());
-      }
-    }
-
-    await this.solveActivities(excluded, todoCount);
+    const excluded = this.buildExclusionSet(doneUuids);
+    await this.runSolveLoop(excluded, todoCount);
   }
 
-  private calculateTodoCount(monthlyValidCount: number): number {
-    const target = this.options.autoRun ?? 13;
+  private computeTodoCount(monthlyValid: number): number {
+    const target = this.options.autoRun;
     if (this.options.debug) {
-      this.logger.info(`Forcing ${target} new activities (debug mode, ${monthlyValidCount} already done this month)`);
+      this.logger.info(`Forcing ${target} new activities (debug mode, ${monthlyValid} already done this month)`);
       return target;
     }
-    const todo = Math.max(0, target - monthlyValidCount);
-    if (todo === 0) {
-      this.logger.success(`Monthly target already met (${monthlyValidCount}/${target})`);
-    } else {
-      this.logger.step(`Need ${todo} more activities (${monthlyValidCount}/${target} done this month)`);
-    }
+    const todo = Math.max(0, target - monthlyValid);
+    if (todo === 0) this.logger.success(`Monthly target already met (${monthlyValid}/${target})`);
+    else this.logger.step(`Need ${todo} more activities (${monthlyValid}/${target} done this month)`);
     return todo;
   }
 
-  private async solveActivities(excluded: Set<string>, todoCount: number): Promise<void> {
-    const categories = this.getCategories();
-    this.logger.info(`Categories: ${categories.join(', ')}  |  batch size: ${BATCH_SIZE}  |  goal: ${todoCount}`);
+  private buildExclusionSet(doneUuids: Set<string>): Set<string> {
+    const excluded = new Set<string>(doneUuids);
+    if (!this.options.cache) return excluded;
+    for (const url of this.urlCache.getAll()) {
+      const m = UUID_REGEX.exec(url);
+      if (m) excluded.add(m[0].toLowerCase());
+    }
+    return excluded;
+  }
+
+  private async runSolveLoop(excluded: Set<string>, todoCount: number): Promise<void> {
+    const categories = this.selectCategories();
+    const progress = new ProgressTracker(todoCount);
+    this.logger.info(progress.renderHeader(categories, BATCH_SIZE));
     console.log('');
 
-    let solved = 0;
-    let attempted = 0;
-    let categoryIndex = 0;
-    const exhausted = new Set<ActivityCategory>();
+    const state: SolveLoopState = {
+      solved: 0, attempted: 0, categoryIndex: 0, exhausted: new Set(),
+    };
     const t0 = Date.now();
 
-    while (solved < todoCount && exhausted.size < categories.length) {
-      const category = categories[categoryIndex++ % categories.length];
-      if (exhausted.has(category)) continue;
+    while (state.solved < todoCount && state.exhausted.size < categories.length) {
+      const category = categories[state.categoryIndex++ % categories.length];
+      if (state.exhausted.has(category)) continue;
 
-      const batch = await this.discoverBatch(category, excluded, todoCount - solved);
-      if (batch.length === 0) { exhausted.add(category); continue; }
+      const batch = await this.discoverBatch(category, excluded, todoCount - state.solved);
+      if (batch.length === 0) { state.exhausted.add(category); continue; }
 
-      for (const act of batch) {
-        if (solved >= todoCount) break;
-        attempted++;
-        if (await this.solveOne(act.contentUuid, category, attempted, solved, todoCount, act.title)) solved++;
-        excluded.add(act.contentUuid);
-      }
+      await this.solveBatch(batch, category, excluded, todoCount, state, progress);
     }
 
-    console.log('');
-    const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
-    const failed = attempted - solved;
-    const suffix = failed > 0 ? ` (${failed} skipped/failed)` : '';
-    if (solved === todoCount) {
-      this.logger.success(chalk.bold(`Completed ${solved}/${todoCount} activities in ${elapsed}s${suffix}`));
-    } else {
-      this.logger.warn(`Stopped at ${solved}/${todoCount} after ${elapsed}s (no more fresh activities${suffix})`);
+    this.printSummary(state, todoCount, Date.now() - t0);
+  }
+
+  private async solveBatch(
+    batch: DiscoveredActivity[],
+    category: ActivityCategory,
+    excluded: Set<string>,
+    todoCount: number,
+    state: SolveLoopState,
+    progress: ProgressTracker,
+  ): Promise<void> {
+    for (const act of batch) {
+      if (state.solved >= todoCount) break;
+      state.attempted++;
+      progress.printRowPrefix(state.attempted, state.solved, category, act.title, act.contentUuid);
+      const succeeded = await this.solveOne(act.contentUuid, progress);
+      if (succeeded) state.solved++;
+      excluded.add(act.contentUuid);
     }
   }
 
-  private async discoverBatch(category: ActivityCategory, excluded: Set<string>, remaining: number) {
-    const urls = await discoverActivities(
-      this.api, category, this.topicUuid, excluded,
-      { minimumLevel: this.options.minimumLevel, maximumLevel: this.options.maximumLevel },
-      this.logger,
-    );
-    return urls.slice(0, Math.min(BATCH_SIZE, remaining));
-  }
-
-  private async solveOne(
-    contentUuid: string, category: string,
-    attempt: number, solved: number, todoCount: number, title: string,
-  ): Promise<boolean> {
-    const progress = `${solved}/${todoCount}`;
-    const tag = chalk.gray(`[#${String(attempt).padStart(2)} ${progress.padEnd(5)} ${category.padEnd(10)}]`);
-    const name = title ? chalk.white(title) : chalk.dim(contentUuid);
-    process.stdout.write(`  ${tag} ${name.slice(0, 55).padEnd(55)} `);
-
-    const url = `${this.api.base}/app/dashboard/learning/${contentUuid}`;
+  private async solveOne(contentUuid: string, progress: ProgressTracker): Promise<boolean> {
+    const url = `${this.siteBase}/app/dashboard/learning/${contentUuid}`;
     try {
-      const result = await solveQuiz(this.api, contentUuid, this.topicUuid, this.logger);
-      if (this.options.cache) addToCache([url]);
+      const result = await this.quiz.solve(contentUuid);
+      if (this.options.cache) this.urlCache.add([url]);
 
-      if (result.skipped) {
-        console.log(chalk.yellow('skipped (no quiz)'));
+      if (result.skipped) { progress.printRowOutcome({ kind: 'skipped' }); return false; }
+      if (result.score !== null && result.score < MIN_VALID_SCORE) {
+        progress.printRowOutcome({ kind: 'failed', score: result.score });
         return false;
       }
-      if (result.score !== null && result.score < 80) {
-        console.log(chalk.red(`failed (${result.score}%)`));
-        return false;
-      }
-      console.log(chalk.green(`${result.score ?? '?'}%  (${result.questionCount}q)`));
+      progress.printRowOutcome({ kind: 'ok', score: result.score, questionCount: result.questionCount });
       return true;
     } catch (e) {
-      const msg = String(e instanceof Error ? e.message : e).replace(/\s+/g, ' ').slice(0, 120);
-      console.log(chalk.red(`error: ${msg}`));
-      if (this.options.cache) addToCache([url]);
+      const msg = String(e instanceof Error ? e.message : e).replaceAll(/\s+/g, ' ').slice(0, 120);
+      progress.printRowOutcome({ kind: 'error', message: msg });
+      if (this.options.cache) this.urlCache.add([url]);
       return false;
     }
   }
 
-  private getCategories(): ActivityCategory[] {
+  private async discoverBatch(
+    category: ActivityCategory,
+    excluded: Set<string>,
+    remaining: number,
+  ): Promise<DiscoveredActivity[]> {
+    const opts: DiscoverOptions = {
+      minimumLevel: this.options.minimumLevel,
+      maximumLevel: this.options.maximumLevel,
+    };
+    const list = await this.discovery.discover(category, excluded, opts);
+    return list.slice(0, Math.min(BATCH_SIZE, remaining));
+  }
+
+  private selectCategories(): ActivityCategory[] {
     const selected: ActivityCategory[] = [];
     if (this.options.vocabulary) selected.push('vocabulary');
     if (this.options.grammar) selected.push('grammar');
@@ -141,5 +148,17 @@ export class AutoRunner {
     if (this.options.video) selected.push('video');
     if (this.options.howto) selected.push('howto');
     return selected.length > 0 ? selected : ALL_CATEGORIES;
+  }
+
+  private printSummary(state: SolveLoopState, todoCount: number, elapsedMs: number): void {
+    console.log('');
+    const elapsed = (elapsedMs / 1000).toFixed(1);
+    const failed = state.attempted - state.solved;
+    const suffix = failed > 0 ? ` (${failed} skipped/failed)` : '';
+    if (state.solved === todoCount) {
+      this.logger.success(chalk.bold(`Completed ${state.solved}/${todoCount} activities in ${elapsed}s${suffix}`));
+    } else {
+      this.logger.warn(`Stopped at ${state.solved}/${todoCount} after ${elapsed}s (no more fresh activities${suffix})`);
+    }
   }
 }
