@@ -13,6 +13,15 @@ export class ShortTextQuestion extends Question {
   }
 
   async submitAnswer(values: string[]): Promise<void> {
-    await this.container.locator('textarea').fill(values[0] ?? '');
+    const textareas = this.container.locator('textarea');
+    const count = await textareas.count();
+    if (count === 1) {
+      await textareas.fill(values[0] ?? '');
+    } else {
+      // Multiple textareas — fill each with corresponding value
+      for (let i = 0; i < count; i++) {
+        await textareas.nth(i).fill(values[i] ?? values[0] ?? '');
+      }
+    }
   }
 }

@@ -9,6 +9,7 @@ import { dismissModals } from '../navigation/dashboard.js';
 import { countMonthlyActivities } from '../navigation/training.js';
 import { discoverActivities } from '../navigation/resources.js';
 import { addToCache, getCachedUrls } from '../services/cache.js';
+import { QuizInterceptor } from '../services/quiz-interceptor.js';
 import type { AppConfig, CLIOptions } from '../types.js';
 import type { Logger } from '../utils/logger.js';
 import type { Page } from 'playwright';
@@ -21,6 +22,7 @@ interface RunContext {
   session: BrowserSession;
   siteUrls: Urls;
   cachedUrls: Set<string>;
+  interceptor: QuizInterceptor;
 }
 
 export class AutoRunner {
@@ -48,7 +50,10 @@ export class AutoRunner {
       if (todoCount === 0) return;
 
       const cachedUrls = this.options.cache ? getCachedUrls() : new Set<string>();
-      await this.solveActivities({ page, session, siteUrls, cachedUrls }, todoCount);
+      const interceptor = new QuizInterceptor(this.logger);
+      const useApi = !this.options.noApi;
+      if (useApi) interceptor.startListening(page);
+      await this.solveActivities({ page, session, siteUrls, cachedUrls, interceptor }, todoCount);
     } finally {
       await session.close();
       this.logger.close();
@@ -121,7 +126,7 @@ export class AutoRunner {
     try {
       const activity = new Activity(actUrl);
       await new ActivityLearning(this.logger, ctx.page, activity).retrieveActivityData();
-      const count = await new ActivitySolving(this.logger, ctx.page, activity, this.config, { noApi: this.options.noApi }).resolveQuiz();
+      const count = await new ActivitySolving(this.logger, ctx.page, activity, this.config, ctx.interceptor, !this.options.noApi).resolveQuiz();
       if (count > 0) this.logger.success(`Progress: ${solved + 1}/${todoCount}`);
       this.cacheUrl(ctx, actUrl);
       return count > 0;

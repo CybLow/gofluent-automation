@@ -6,6 +6,7 @@ import { ActivityLearning } from '../core/ActivityLearning.js';
 import { ActivitySolving } from '../core/ActivitySolving.js';
 import { ensureLanguage } from '../navigation/profile.js';
 import { dismissModals } from '../navigation/dashboard.js';
+import { QuizInterceptor } from '../services/quiz-interceptor.js';
 import type { AppConfig, CLIOptions } from '../types.js';
 import type { Logger } from '../utils/logger.js';
 
@@ -44,7 +45,10 @@ export class SimpleRunner {
       const learning = new ActivityLearning(this.logger, page, activity);
       await learning.retrieveActivityData();
 
-      const solving = new ActivitySolving(this.logger, page, activity, this.config, { noApi: this.options.noApi });
+      const interceptor = new QuizInterceptor(this.logger);
+      const useApi = !this.options.noApi;
+      if (useApi) interceptor.startListening(page);
+      const solving = new ActivitySolving(this.logger, page, activity, this.config, interceptor, useApi);
       await solving.resolveQuiz();
 
       this.logger.success('Activity completed!');

@@ -14,23 +14,24 @@ const S = SELECTORS;
 export class ActivitySolving {
   private retakeCount = 0;
   private readonly insertableAudioContext: string[] = [];
-  private readonly interceptor: QuizInterceptor;
-  private readonly useApi: boolean;
 
   constructor(
     private readonly logger: Logger,
     private readonly page: Page,
     private readonly activity: Activity,
     private readonly config: AppConfig,
-    options?: { noApi?: boolean },
-  ) {
-    this.useApi = !options?.noApi;
-    this.interceptor = new QuizInterceptor(logger);
-  }
+    private readonly interceptor: QuizInterceptor,
+    private readonly useApi: boolean = true,
+  ) {}
 
   async resolveQuiz(): Promise<number> {
     this.logger.info('Resolving the quiz...');
     for (const q of this.activity.questions) q.cacheUsed = false;
+    if (this.retakeCount === 0) {
+      this.interceptor.resetForNewActivity(); // New activity → clear old answers
+    } else {
+      this.interceptor.resetIndex(); // Retake → reuse same answers from index 0
+    }
 
     const ready = await this.initQuiz();
     if (ready === 'already_done') return this.activity.questions.length;
@@ -192,10 +193,7 @@ export class ActivitySolving {
    * Navigate to the activity page and switch to the quiz tab.
    */
   private async loadActivityPageAndTab(): Promise<void> {
-    // Start interceptor BEFORE navigation so it captures the quiz JSON
-    if (this.useApi) this.interceptor.startListening(this.page);
-
-    // Always navigate (even if URL matches) to trigger API response for interceptor
+    // Always navigate to trigger API response for interceptor
     this.logger.debug(`Navigating to: ${this.activity.url}`);
     await this.page.goto(this.activity.url, { waitUntil: 'domcontentloaded' });
     await this.page.waitForLoadState('networkidle').catch(() => {});
@@ -287,10 +285,6 @@ export class ActivitySolving {
     const questionStr = await question.asText();
     this.logger.debug(`Question: ${questionStr.slice(0, 120)}...`);
 
-    // Also get raw stem text from DOM for better API matching
-    const rawStem = await questionContainer.locator(S.QUIZ.STEM).first().textContent().catch(() => null);
-
-    // Check cache
     const cached = this.activity.getQuestion(questionStr);
     let answers: string[];
 
@@ -301,10 +295,8 @@ export class ActivitySolving {
       cached.cacheUsed = true;
       answers = cached.correctAnswer;
     } else {
-      // Priority 1: API intercepted answers — try both formatted and raw stem
-      const apiAnswer = this.useApi
-        ? (this.interceptor.getAnswer(questionStr) ?? (rawStem ? this.interceptor.getAnswer(rawStem) : null))
-        : null;
+      // Priority 1: API answer by index (instant, 100% accurate)
+      const apiAnswer = this.useApi ? this.interceptor.getNextAnswer() : null;
       if (apiAnswer) {
         this.logger.info(`[API] ${JSON.stringify(apiAnswer).slice(0, 150)}`);
         answers = apiAnswer;
