@@ -49,11 +49,6 @@ export class AutoRunner {
       const allUrls = report.monthly.map(a => a.url);
       if (this.options.cache) addToCache(allUrls);
 
-      this.logger.info(`Valid (>=80%): ${report.monthlyValid.length} | Failed (<80%): ${report.monthlyFailed.length}`);
-      if (report.monthlyFailed.length > 0) {
-        this.logger.warn(`Activities below 80%: ${report.monthlyFailed.map(a => a.title.slice(0, 30)).join(', ')}`);
-      }
-
       // Only count valid activities (>=80%) toward the monthly target
       const todoCount = this.calculateTodoCount(report.monthlyValid.length);
       if (todoCount === 0) return;
