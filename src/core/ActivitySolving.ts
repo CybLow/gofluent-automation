@@ -88,7 +88,7 @@ export class ActivitySolving {
         errors = 0;
       } else {
         if (++errors >= 3) { await this.dumpDebugHtml('debug_stuck.html'); break; }
-        await this.page.waitForLoadState('networkidle').catch(() => {});
+        await this.page.waitForTimeout(1000);
       }
     }
     return questionCount;

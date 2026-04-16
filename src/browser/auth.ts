@@ -21,7 +21,8 @@ export class Authenticator {
     // Step 0: Check if stored session is still valid
     this.logger.info('Checking existing session...');
     await page.goto(this.siteUrls.DASHBOARD, { waitUntil: 'domcontentloaded' });
-    await page.waitForLoadState('networkidle').catch(() => {});
+    // Wait for dashboard header instead of full networkidle
+    await page.locator('.header__logo, [class*="header"]').first().waitFor({ timeout: 10_000 }).catch(() => {});
 
     if (this.isOnDashboard(page)) {
       this.logger.success('Session still valid, already logged in.');

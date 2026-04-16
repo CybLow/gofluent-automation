@@ -123,6 +123,7 @@ async function goToNextPage(page: Page): Promise<boolean> {
   if (disabled) return false;
 
   await last.click({ force: true });
-  await page.waitForLoadState('networkidle');
+  // Wait for cards to update instead of full networkidle
+  await page.locator(S.TRAINING.BLOCK).first().waitFor({ timeout: 5_000 }).catch(() => {});
   return true;
 }
