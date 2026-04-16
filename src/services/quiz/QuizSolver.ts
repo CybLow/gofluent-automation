@@ -18,9 +18,10 @@ export class QuizSolver implements IQuizSolver {
     api: IApiClient,
     topicUuid: string,
     private readonly logger: ILogger,
+    questionDelayMs = 0,
   ) {
     this.loader = new QuizDataLoader(api, this.scanner, logger);
-    this.stateClient = new QuizStateClient(api, topicUuid, logger);
+    this.stateClient = new QuizStateClient(api, topicUuid, logger, questionDelayMs);
   }
 
   async solve(contentUuid: string): Promise<SolveResult> {

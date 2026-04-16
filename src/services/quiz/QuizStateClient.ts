@@ -1,5 +1,6 @@
 import type { IApiClient } from '@/infra/http/IApiClient';
 import type { ILogger } from '@/infra/logging/ILogger';
+import { wait } from '@/infra/http/RetryPolicy';
 import type { Question } from './QuestionScanner';
 
 const GEO = 'EU';
@@ -9,6 +10,7 @@ export class QuizStateClient {
     private readonly api: IApiClient,
     private readonly topicUuid: string,
     private readonly logger: ILogger,
+    private readonly questionDelayMs: number = 0,
   ) {}
 
   async runAttempt(
@@ -20,6 +22,7 @@ export class QuizStateClient {
     const stateId = await this.createState(quizId, questions, contentUuid, forceStartNew);
     this.logger.debug(`stateId ${stateId}`);
     for (let i = 0; i < questions.length; i++) {
+      if (i > 0 && this.questionDelayMs > 0) await wait(this.questionDelayMs);
       await this.submitAnswer(stateId, i + 1, questions[i]);
     }
   }

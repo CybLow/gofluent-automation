@@ -47,7 +47,13 @@ bun src/index.ts --auto-run 13 --debug                 # logs verbeux
 | `--no-cache` | Ignorer le cache d'URLs deja faites |
 | `--no-headless` | Afficher la fenetre du browser a l'auth (utile pour debug MFA) |
 | `--profile <nom>` | Profil de credentials (voir ci-dessous) |
+| `--activity-delay <duree>` | Pause entre activites en mode `--auto-run`, ex `500ms`, `30s`, `2m`, `1h` (defaut 0) |
+| `--question-delay <duree>` | Pause entre questions dans un quiz, meme syntaxe (defaut 0) |
 | `--debug` | Logs verbeux (GET/POST, states) |
+
+### Unites pour les delays
+
+Les flags `--activity-delay` et `--question-delay` acceptent `ms`, `s`, `m`, `h`. Sans suffixe, la valeur est interpretee en secondes. Exemples : `500ms`, `1.5s`, `2m`, `1h`, `0.25h`. Utile pour eviter de trigger un rate-limit ou simplement tourner plus discretement.
 
 ## Multi-comptes avec `--profile`
 

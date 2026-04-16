@@ -1,6 +1,7 @@
 import chalk from 'chalk';
 import { BATCH_SIZE, MIN_VALID_SCORE, UUID_REGEX } from '@/constants';
 import type { ILogger } from '@/infra/logging/ILogger';
+import { wait } from '@/infra/http/RetryPolicy';
 import type { IUrlCacheRepo } from '@/infra/persistence/IUrlCacheRepo';
 import { ProgressTracker } from '@/reporting/ProgressTracker';
 import type { DiscoverOptions, IActivityDiscovery } from '@/services/activities/IActivityDiscovery';
@@ -98,6 +99,9 @@ export class AutoRunner implements IRunner {
   ): Promise<void> {
     for (const act of batch) {
       if (state.solved >= todoCount) break;
+      if (state.attempted > 0 && this.options.activityDelayMs > 0) {
+        await wait(this.options.activityDelayMs);
+      }
       state.attempted++;
       progress.printRowPrefix(state.attempted, state.solved, category, act.title, act.contentUuid);
       const succeeded = await this.solveOne(act.contentUuid, progress);

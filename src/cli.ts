@@ -21,6 +21,23 @@ export function parsePositiveInt(raw: string): number {
   return n;
 }
 
+const DURATION_UNITS: Record<string, number> = { ms: 1, s: 1000, m: 60_000, h: 3_600_000 };
+
+export function parseDuration(raw: string): number {
+  const m = /^(\d+(?:\.\d+)?)(ms|s|m|h)?$/i.exec(raw.trim());
+  if (!m) {
+    throw new InvalidArgumentError(
+      `expected a duration like "500ms", "30s", "2m", "1h" (bare number = seconds), got "${raw}"`,
+    );
+  }
+  const value = Number.parseFloat(m[1]);
+  if (!Number.isFinite(value) || value < 0) {
+    throw new InvalidArgumentError(`negative or invalid duration: "${raw}"`);
+  }
+  const unit = (m[2] ?? 's').toLowerCase();
+  return Math.round(value * DURATION_UNITS[unit]);
+}
+
 function buildProgram(): Command {
   return new Command()
     .name('gofluent-auto')
@@ -40,7 +57,9 @@ function buildProgram(): Command {
     .option('--no-cache', 'Disable activity URL caching')
     .option('--profile <name>', 'Credential profile name from .env')
     .option('--minimum-level <level>', 'Minimum CEFR level (A1-C2)', parseCefrLevel)
-    .option('--maximum-level <level>', 'Maximum CEFR level (A1-C2)', parseCefrLevel);
+    .option('--maximum-level <level>', 'Maximum CEFR level (A1-C2)', parseCefrLevel)
+    .option('--activity-delay <duration>', 'Sleep between activities, e.g. 30s, 2m, 1h (auto-run only)', parseDuration, 0)
+    .option('--question-delay <duration>', 'Sleep between questions in a quiz, e.g. 500ms, 2s', parseDuration, 0);
 }
 
 function extractCommon(raw: Record<string, unknown>): CommonOptions {
@@ -49,6 +68,7 @@ function extractCommon(raw: Record<string, unknown>): CommonOptions {
     debug: raw.debug === true,
     headless: raw.headless !== false,
     profile: raw.profile as string | undefined,
+    questionDelayMs: typeof raw.questionDelay === 'number' ? raw.questionDelay : 0,
   };
 }
 
@@ -64,6 +84,7 @@ function buildAuto(common: CommonOptions, raw: Record<string, unknown>, count: n
     cache: raw.cache !== false,
     minimumLevel: raw.minimumLevel as CEFRLevel | undefined,
     maximumLevel: raw.maximumLevel as CEFRLevel | undefined,
+    activityDelayMs: typeof raw.activityDelay === 'number' ? raw.activityDelay : 0,
   };
 }
 

@@ -53,12 +53,15 @@ function buildRunner(
   if (parsed.mode === 'report') {
     return new ReportRunner(training, new ReportFormatter(), logger);
   }
+  const questionDelayMs = parsed.common.questionDelayMs;
+
   if (parsed.mode === 'simple' && parsed.simple) {
-    return new SimpleRunner(new QuizSolver(api, topicUuid, logger), logger, parsed.simple);
+    const quiz = new QuizSolver(api, topicUuid, logger, questionDelayMs);
+    return new SimpleRunner(quiz, logger, parsed.simple);
   }
   if (!parsed.auto) throw new Error('Missing auto-run options');
   const urlCache = new FileUrlCacheRepo(paths.URL_CACHE_PATH);
   const discovery = new ApiActivityDiscovery(api, topicUuid, logger);
-  const quiz = new QuizSolver(api, topicUuid, logger);
+  const quiz = new QuizSolver(api, topicUuid, logger, questionDelayMs);
   return new AutoRunner(training, discovery, quiz, urlCache, siteBase, logger, parsed.auto);
 }

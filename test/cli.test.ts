@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { parseCefrLevel, parseCli, parsePositiveInt } from '@/cli';
+import { parseCefrLevel, parseCli, parseDuration, parsePositiveInt } from '@/cli';
 import { MONTHLY_TARGET_DEFAULT } from '@/constants';
 
 describe('parseCefrLevel', () => {
@@ -41,6 +41,94 @@ describe('parsePositiveInt', () => {
 
   test('accepts leading integer and ignores trailing (parseInt behavior)', () => {
     expect(parsePositiveInt('42abc')).toBe(42);
+  });
+});
+
+describe('parseDuration', () => {
+  test('bare number defaults to seconds', () => {
+    expect(parseDuration('0')).toBe(0);
+    expect(parseDuration('30')).toBe(30_000);
+    expect(parseDuration('1.5')).toBe(1500);
+  });
+
+  test('ms suffix → milliseconds', () => {
+    expect(parseDuration('500ms')).toBe(500);
+    expect(parseDuration('0ms')).toBe(0);
+  });
+
+  test('s suffix → seconds', () => {
+    expect(parseDuration('30s')).toBe(30_000);
+    expect(parseDuration('0.5s')).toBe(500);
+  });
+
+  test('m suffix → minutes', () => {
+    expect(parseDuration('2m')).toBe(120_000);
+    expect(parseDuration('0.5m')).toBe(30_000);
+  });
+
+  test('h suffix → hours', () => {
+    expect(parseDuration('1h')).toBe(3_600_000);
+    expect(parseDuration('0.25h')).toBe(900_000);
+  });
+
+  test('case-insensitive suffix', () => {
+    expect(parseDuration('500MS')).toBe(500);
+    expect(parseDuration('2M')).toBe(120_000);
+    expect(parseDuration('1H')).toBe(3_600_000);
+  });
+
+  test('trims whitespace', () => {
+    expect(parseDuration('  30s  ')).toBe(30_000);
+  });
+
+  test('rejects negative', () => {
+    expect(() => parseDuration('-1s')).toThrow(/duration/);
+  });
+
+  test('rejects garbage', () => {
+    expect(() => parseDuration('abc')).toThrow(/duration/);
+    expect(() => parseDuration('5x')).toThrow(/duration/);
+    expect(() => parseDuration('')).toThrow(/duration/);
+  });
+
+  test('rejects non-numeric with suffix', () => {
+    expect(() => parseDuration('abc s')).toThrow(/duration/);
+  });
+});
+
+describe('parseCli delay flags', () => {
+  test('--question-delay defaults to 0 when omitted', () => {
+    const p = parseCli(['bun', 'src/index.ts', '--report']);
+    expect(p.common.questionDelayMs).toBe(0);
+  });
+
+  test('--activity-delay defaults to 0 when omitted', () => {
+    const p = parseCli(['bun', 'src/index.ts', '--auto-run', '1']);
+    expect(p.auto?.activityDelayMs).toBe(0);
+  });
+
+  test('--question-delay 500ms → 500', () => {
+    const p = parseCli(['bun', 'src/index.ts', '--report', '--question-delay', '500ms']);
+    expect(p.common.questionDelayMs).toBe(500);
+  });
+
+  test('--question-delay 2 (bare) → 2000ms', () => {
+    const p = parseCli(['bun', 'src/index.ts', '--report', '--question-delay', '2']);
+    expect(p.common.questionDelayMs).toBe(2000);
+  });
+
+  test('--activity-delay 1m flows into AutoOptions', () => {
+    const p = parseCli(['bun', 'src/index.ts', '--auto-run', '3', '--activity-delay', '1m']);
+    expect(p.auto?.activityDelayMs).toBe(60_000);
+  });
+
+  test('question delay inherited by SimpleOptions via CommonOptions', () => {
+    const p = parseCli(['bun', 'src/index.ts', '--simple-run', 'abc', '--question-delay', '1s']);
+    expect(p.simple?.questionDelayMs).toBe(1000);
+  });
+
+  test('rejects invalid duration', () => {
+    expect(() => parseCli(['bun', 'src/index.ts', '--report', '--question-delay', 'abc'])).toThrow();
   });
 });
 

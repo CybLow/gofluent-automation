@@ -5,6 +5,7 @@ export interface CommonOptions {
   debug: boolean;
   headless: boolean;
   profile?: string;
+  questionDelayMs: number;
 }
 
 export interface AutoOptions extends CommonOptions {
@@ -17,6 +18,7 @@ export interface AutoOptions extends CommonOptions {
   cache: boolean;
   minimumLevel?: CEFRLevel;
   maximumLevel?: CEFRLevel;
+  activityDelayMs: number;
 }
 
 export interface SimpleOptions extends CommonOptions {
