@@ -35,6 +35,9 @@ export interface CLIOptions {
   simpleRun?: string;
   vocabulary: boolean;
   grammar: boolean;
+  article: boolean;
+  video: boolean;
+  howto: boolean;
   language: string;
   debug: boolean;
   headless: boolean;

@@ -17,6 +17,9 @@ program
   .option('--report', 'Show training report (scores, stats, history)')
   .option('--vocabulary', 'Target vocabulary activities')
   .option('--grammar', 'Target grammar activities')
+  .option('--article', 'Target article activities')
+  .option('--video', 'Target video activities')
+  .option('--howto', 'Target howto activities')
   .option('--language <name>', 'Learning language (e.g., Anglais, Espagnol)', 'Anglais')
   .option('--debug', 'Enable verbose logging', false)
   .option('--no-headless', 'Show browser window (default: headless)')
@@ -35,6 +38,9 @@ const options: CLIOptions = {
   simpleRun: opts.simpleRun,
   vocabulary: !!opts.vocabulary,
   grammar: !!opts.grammar,
+  article: !!opts.article,
+  video: !!opts.video,
+  howto: !!opts.howto,
   language: opts.language,
   debug: opts.debug,
   headless: opts.headless !== false,

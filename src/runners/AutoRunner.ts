@@ -163,9 +163,12 @@ export class AutoRunner {
   }
 
   private getCategories(): ActivityCategory[] {
-    if (this.options.vocabulary && !this.options.grammar) return ['vocabulary'];
-    if (this.options.grammar && !this.options.vocabulary) return ['grammar'];
-    if (this.options.vocabulary && this.options.grammar) return ['vocabulary', 'grammar'];
-    return ALL_CATEGORIES;
+    const selected: ActivityCategory[] = [];
+    if (this.options.vocabulary) selected.push('vocabulary');
+    if (this.options.grammar) selected.push('grammar');
+    if (this.options.article) selected.push('article');
+    if (this.options.video) selected.push('video');
+    if (this.options.howto) selected.push('howto');
+    return selected.length > 0 ? selected : ALL_CATEGORIES;
   }
 }
