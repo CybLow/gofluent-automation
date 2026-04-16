@@ -65,6 +65,8 @@ export abstract class Question {
     }
 
     const target = idx >= 0 && idx < count ? options.nth(idx) : options.first();
+    const matchedText = idx >= 0 ? texts[idx]?.trim() : texts[0]?.trim();
+    this.logger.debug(`findAndClickOption("${value}") → matched "${matchedText}" (idx=${idx}/${count})`);
     await clickOptionAndWait(this.container, target, this.page);
     return true;
   }
@@ -95,6 +97,15 @@ export abstract class Question {
     const submitOnPage = this.page.locator(S.SUBMIT);
     const submitButton = (await submitInContainer.count() > 0) ? submitInContainer : submitOnPage;
 
+    // Debug: check receivers before submit
+    const receiversBefore = this.container.locator("[id^='receiver-']");
+    const rCount = await receiversBefore.count();
+    if (rCount > 0) {
+      const rTexts: string[] = [];
+      for (let i = 0; i < rCount; i++) rTexts.push((await receiversBefore.nth(i).textContent())?.trim() ?? '(empty)');
+      this.logger.debug(`Receivers before submit: [${rTexts.join(', ')}]`);
+    }
+
     try {
       await submitButton.click({ force: true });
     } catch (e) {
@@ -109,6 +120,7 @@ export abstract class Question {
     if (correct && correct.length > 0) {
       return correct;
     }
+    this.logger.debug('Could not read correct answer from explanation, using submitted values');
     return values;
   }
 
@@ -177,13 +189,23 @@ export abstract class Question {
 
     const receiverCount = await container.locator(S.RECEIVER).count();
 
-    if (receiverCount > 1) {
-      const hasTextLabels = await this.stemHasTextLabels(container);
-      return hasTextLabels
-        ? new (await import('./MatchTextQuestion.js')).MatchTextQuestion(page, container, logger)
-        : new (await import('./FillGapsBlockQuestion.js')).FillGapsBlockQuestion(page, container, logger);
+    if (receiverCount >= 1) {
+      // Check if receivers are INSIDE the stem (fill-gaps) or outside (scrambled/match)
+      const stem = container.locator(S.STEM);
+      const receiverInStem = (await stem.count()) > 0
+        ? await stem.first().locator(S.RECEIVER).count()
+        : 0;
+
+      if (receiverInStem > 0) {
+        // Receivers inline in stem = fill-gaps-block or match-text
+        const hasTextLabels = await this.stemHasTextLabels(container);
+        return hasTextLabels
+          ? new (await import('./MatchTextQuestion.js')).MatchTextQuestion(page, container, logger)
+          : new (await import('./FillGapsBlockQuestion.js')).FillGapsBlockQuestion(page, container, logger);
+      }
     }
 
+    // No receivers in stem = scrambled sentences (assemble words into order)
     return new (await import('./ScrambledSentencesQuestion.js')).ScrambledSentencesQuestion(page, container, logger);
   }
 
