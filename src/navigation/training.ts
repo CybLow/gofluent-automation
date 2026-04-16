@@ -9,29 +9,52 @@ const S = SELECTORS;
 export interface ActivityInfo {
   url: string;
   date: Date;
+  score: number | null;
+  title: string;
 }
 
-export async function countMonthlyActivities(
+export interface TrainingReport {
+  all: ActivityInfo[];
+  monthly: ActivityInfo[];
+  monthlyValid: ActivityInfo[];   // score >= 80%
+  monthlyFailed: ActivityInfo[];  // score < 80%
+}
+
+export async function scanTrainingPage(
   page: Page,
   siteUrls: Urls,
   flagAlt: string | null,
   logger: Logger,
-): Promise<{ count: number; urls: string[] }> {
-  logger.info('Counting monthly activities...');
+): Promise<TrainingReport> {
+  logger.info('Scanning training page...');
   await page.goto(siteUrls.TRAINING, { waitUntil: 'domcontentloaded' });
 
   try {
     await page.locator(S.TRAINING.CONTAINER).waitFor({ timeout: 15_000 });
   } catch {
-    logger.warn('Training page not loaded, assuming 0 activities');
-    return { count: 0, urls: [] };
+    logger.warn('Training page not loaded');
+    return { all: [], monthly: [], monthlyValid: [], monthlyFailed: [] };
   }
 
-  const activities = await paginateThroughTraining(page, siteUrls, flagAlt, logger);
-  const monthly = activities.filter(a => isCurrentMonthAndYear(a.date));
-  logger.info(`Found ${monthly.length} activities this month (${activities.length} total)`);
+  const all = await paginateThroughTraining(page, siteUrls, flagAlt, logger);
+  const monthly = all.filter(a => isCurrentMonthAndYear(a.date));
 
-  return { count: monthly.length, urls: monthly.map(a => a.url) };
+  // Deduplicate by URL — keep the BEST score per activity
+  const bestByUrl = new Map<string, ActivityInfo>();
+  for (const a of monthly) {
+    const existing = bestByUrl.get(a.url);
+    if (!existing || (a.score ?? 0) > (existing.score ?? 0)) {
+      bestByUrl.set(a.url, a);
+    }
+  }
+  const deduped = [...bestByUrl.values()];
+
+  const monthlyValid = deduped.filter(a => a.score !== null && a.score >= 80);
+  const monthlyFailed = deduped.filter(a => a.score !== null && a.score < 80);
+
+  logger.info(`Training: ${deduped.length} unique this month (${monthlyValid.length} valid >=80%, ${monthlyFailed.length} failed <80%)`);
+
+  return { all, monthly, monthlyValid, monthlyFailed };
 }
 
 async function paginateThroughTraining(
@@ -42,7 +65,7 @@ async function paginateThroughTraining(
 
   while (true) {
     logger.debug(`Scanning training page ${pageNum}`);
-    await collectBlockActivities(page, siteUrls, flagAlt, logger, activities);
+    await collectBlockActivities(page, siteUrls, flagAlt, activities);
 
     if (!await goToNextPage(page)) break;
     pageNum++;
@@ -52,67 +75,54 @@ async function paginateThroughTraining(
 }
 
 async function collectBlockActivities(
-  page: Page, siteUrls: Urls, flagAlt: string | null, logger: Logger, activities: ActivityInfo[],
+  page: Page, siteUrls: Urls, flagAlt: string | null, activities: ActivityInfo[],
 ): Promise<void> {
   const blocks = page.locator(S.TRAINING.BLOCK);
-  const blockCount = await blocks.count();
 
-  for (let i = 0; i < blockCount; i++) {
+  for (let i = 0; i < await blocks.count(); i++) {
     const block = blocks.nth(i);
     const dateText = await block.locator(S.TRAINING.BLOCK_DATE).textContent();
-    if (!dateText) continue;
-
     let date: Date;
-    try {
-      date = parseDateString(dateText);
-    } catch {
-      logger.debug(`Could not parse date: ${dateText}`);
-      continue;
-    }
+    try { date = parseDateString(dateText?.trim() ?? ''); } catch { continue; }
 
-    await collectCardActivities(block, siteUrls, flagAlt, date, activities);
-  }
-}
+    const cards = block.locator(S.TRAINING.BLOCK_CARD);
+    for (let j = 0; j < await cards.count(); j++) {
+      const card = cards.nth(j);
+      if (flagAlt && !await matchesFlag(card, flagAlt)) continue;
 
-async function collectCardActivities(
-  block: import('playwright').Locator, siteUrls: Urls, flagAlt: string | null, date: Date, activities: ActivityInfo[],
-): Promise<void> {
-  const cards = block.locator(S.TRAINING.BLOCK_CARD);
-  const cardCount = await cards.count();
+      const href = await card.locator(S.TRAINING.BLOCK_CARD_LINK).getAttribute('href').catch(() => null);
+      if (!href) continue;
 
-  for (let j = 0; j < cardCount; j++) {
-    const card = cards.nth(j);
+      // Extract score from status text (e.g. "83% - Validé")
+      const statusText = await card.locator('.training-card__status').textContent().catch(() => '');
+      const scoreMatch = /(\d+)\s*%/.exec(statusText ?? '');
+      const score = scoreMatch ? Number.parseInt(scoreMatch[1], 10) : null;
 
-    if (flagAlt && !await matchesLanguageFlag(card, flagAlt)) continue;
+      // Extract title
+      const linkText = await card.locator('.training-card__link').textContent().catch(() => '');
+      const typeText = await card.locator('.training-card__type').textContent().catch(() => '');
+      const title = (linkText ?? '').replace(typeText ?? '', '').replace(statusText ?? '', '').trim();
 
-    const href = await card.locator(S.TRAINING.BLOCK_CARD_LINK).getAttribute('href').catch(() => null);
-    if (href) {
-      activities.push({ url: `${siteUrls.BASE}${href}`, date });
+      activities.push({ url: `${siteUrls.BASE}${href}`, date, score, title });
     }
   }
 }
 
-async function matchesLanguageFlag(card: import('playwright').Locator, flagAlt: string): Promise<boolean> {
+async function matchesFlag(card: import('playwright').Locator, flagAlt: string): Promise<boolean> {
   try {
-    const cardFlagAlt = await card.locator(S.TRAINING.BLOCK_CARD_FLAG).getAttribute('alt');
-    return cardFlagAlt === flagAlt;
-  } catch {
-    return false;
-  }
+    return (await card.locator("img[alt^='flag']").getAttribute('alt')) === flagAlt;
+  } catch { return false; }
 }
 
 async function goToNextPage(page: Page): Promise<boolean> {
-  const paginationItems = page.locator(`${S.TRAINING.PAGINATION} ${S.TRAINING.PAGINATION_ITEM}`);
-  const paginationCount = await paginationItems.count();
-  if (paginationCount === 0) return false;
+  const items = page.locator(`${S.TRAINING.PAGINATION} ${S.TRAINING.PAGINATION_ITEM}`);
+  if (await items.count() === 0) return false;
 
-  const lastButton = paginationItems.last();
-  const isDisabled = await lastButton.evaluate(el => {
-    return el.hasAttribute('disabled') || el.classList.contains('disabled');
-  });
-  if (isDisabled) return false;
+  const last = items.last();
+  const disabled = await last.evaluate(el => el.hasAttribute('disabled') || el.classList.contains('disabled'));
+  if (disabled) return false;
 
-  await lastButton.click({ force: true });
+  await last.click({ force: true });
   await page.waitForLoadState('networkidle');
   return true;
 }

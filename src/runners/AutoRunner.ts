@@ -6,7 +6,7 @@ import { ActivityLearning } from '../core/ActivityLearning.js';
 import { ActivitySolving } from '../core/ActivitySolving.js';
 import { ensureLanguage } from '../navigation/profile.js';
 import { dismissModals } from '../navigation/dashboard.js';
-import { countMonthlyActivities } from '../navigation/training.js';
+import { scanTrainingPage } from '../navigation/training.js';
 import { discoverActivities } from '../navigation/resources.js';
 import { addToCache, getCachedUrls } from '../services/cache.js';
 import { QuizInterceptor } from '../services/quiz-interceptor.js';
@@ -43,10 +43,19 @@ export class AutoRunner {
       await dismissModals(page, this.logger);
 
       const { flagAlt } = await ensureLanguage(page, this.options.language, siteUrls, this.logger);
-      const { count: monthlyCount, urls: doneUrls } = await countMonthlyActivities(page, siteUrls, flagAlt, this.logger);
-      if (this.options.cache) addToCache(doneUrls);
 
-      const todoCount = this.calculateTodoCount(monthlyCount);
+      // Scan training page — get scores, cache URLs, count valid (>=80%) activities
+      const report = await scanTrainingPage(page, siteUrls, flagAlt, this.logger);
+      const allUrls = report.monthly.map(a => a.url);
+      if (this.options.cache) addToCache(allUrls);
+
+      this.logger.info(`Valid (>=80%): ${report.monthlyValid.length} | Failed (<80%): ${report.monthlyFailed.length}`);
+      if (report.monthlyFailed.length > 0) {
+        this.logger.warn(`Activities below 80%: ${report.monthlyFailed.map(a => a.title.slice(0, 30)).join(', ')}`);
+      }
+
+      // Only count valid activities (>=80%) toward the monthly target
+      const todoCount = this.calculateTodoCount(report.monthlyValid.length);
       if (todoCount === 0) return;
 
       const cachedUrls = this.options.cache ? getCachedUrls() : new Set<string>();
