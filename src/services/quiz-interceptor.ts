@@ -81,7 +81,9 @@ export class QuizInterceptor {
         if (resolved) this.answersByIndex.push(resolved);
       }
 
-      this.logger.debug(`[API] Intercepted ${questions.length} questions (${this.answersByIndex.length} resolved)`);
+      if (questions.length > 0) {
+        this.logger.debug(`[API] Intercepted ${questions.length} questions (${this.answersByIndex.length} total)`);
+      }
     } catch (e) {
       this.logger.debug(`[API] Parse error: ${e}`);
     }

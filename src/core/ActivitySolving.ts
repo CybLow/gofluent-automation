@@ -175,12 +175,14 @@ export class ActivitySolving {
       this.logger.debug(`Captured text: ${textContent.slice(0, 100)}...`);
     }
 
-    // Capture audio transcription if present
-    const audioTranscript = await transcribeAudioFromElement(
-      this.page, insertable, this.config, this.logger,
-    );
-    if (audioTranscript) {
-      this.insertableAudioContext.push(`[Audio transcription]: ${audioTranscript}`);
+    // Capture audio only in AI mode (API mode doesn't need audio context)
+    if (!this.useApi) {
+      const audioTranscript = await transcribeAudioFromElement(
+        this.page, insertable, this.config, this.logger,
+      );
+      if (audioTranscript) {
+        this.insertableAudioContext.push(`[Audio transcription]: ${audioTranscript}`);
+      }
     }
 
     // Click Next to advance past the insertable page

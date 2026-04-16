@@ -65,8 +65,6 @@ export abstract class Question {
     }
 
     const target = idx >= 0 && idx < count ? options.nth(idx) : options.first();
-    const matchedText = idx >= 0 ? texts[idx]?.trim() : texts[0]?.trim();
-    this.logger.debug(`findAndClickOption("${value}") → matched "${matchedText}" (idx=${idx}/${count})`);
     await clickOptionAndWait(this.container, target, this.page);
     return true;
   }
@@ -96,15 +94,6 @@ export abstract class Question {
     const submitInContainer = this.container.locator(S.SUBMIT);
     const submitOnPage = this.page.locator(S.SUBMIT);
     const submitButton = (await submitInContainer.count() > 0) ? submitInContainer : submitOnPage;
-
-    // Debug: check receivers before submit
-    const receiversBefore = this.container.locator("[id^='receiver-']");
-    const rCount = await receiversBefore.count();
-    if (rCount > 0) {
-      const rTexts: string[] = [];
-      for (let i = 0; i < rCount; i++) rTexts.push((await receiversBefore.nth(i).textContent())?.trim() ?? '(empty)');
-      this.logger.debug(`Receivers before submit: [${rTexts.join(', ')}]`);
-    }
 
     try {
       await submitButton.click({ force: true });
