@@ -44,7 +44,7 @@ export class SimpleRunner {
       const learning = new ActivityLearning(this.logger, page, activity);
       await learning.retrieveActivityData();
 
-      const solving = new ActivitySolving(this.logger, page, activity, this.config);
+      const solving = new ActivitySolving(this.logger, page, activity, this.config, { noApi: this.options.noApi });
       await solving.resolveQuiz();
 
       this.logger.success('Activity completed!');

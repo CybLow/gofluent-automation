@@ -19,6 +19,7 @@ program
   .option('--debug', 'Enable verbose logging', false)
   .option('--no-headless', 'Show browser window (default: headless)')
   .option('--no-cache', 'Disable activity URL caching')
+  .option('--no-api', 'Disable API answer interception (force AI mode)')
   .option('--profile <name>', 'Credential profile name from .env')
   .option('--minimum-level <level>', 'Minimum CEFR level (A1-C2)')
   .option('--maximum-level <level>', 'Maximum CEFR level (A1-C2)');
@@ -39,6 +40,7 @@ const options: CLIOptions = {
   profile: opts.profile,
   minimumLevel: opts.minimumLevel as CEFRLevel | undefined,
   maximumLevel: opts.maximumLevel as CEFRLevel | undefined,
+  noApi: opts.api === false,
 };
 
 async function main() {

@@ -121,7 +121,7 @@ export class AutoRunner {
     try {
       const activity = new Activity(actUrl);
       await new ActivityLearning(this.logger, ctx.page, activity).retrieveActivityData();
-      const count = await new ActivitySolving(this.logger, ctx.page, activity, this.config).resolveQuiz();
+      const count = await new ActivitySolving(this.logger, ctx.page, activity, this.config, { noApi: this.options.noApi }).resolveQuiz();
       if (count > 0) this.logger.success(`Progress: ${solved + 1}/${todoCount}`);
       this.cacheUrl(ctx, actUrl);
       return count > 0;

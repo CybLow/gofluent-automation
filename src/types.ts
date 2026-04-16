@@ -42,6 +42,7 @@ export interface CLIOptions {
   profile?: string;
   minimumLevel?: CEFRLevel;
   maximumLevel?: CEFRLevel;
+  noApi?: boolean;
 }
 
 export interface AIProvider {

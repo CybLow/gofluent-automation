@@ -4,7 +4,8 @@ import { SELECTORS } from '../constants/selectors.js';
 import { Question } from '../questions/Question.js';
 import { getAiAnswer } from '../services/ai.js';
 import { transcribeAudioFromElement } from '../services/audio.js';
-import type { AppConfig } from '../types.js';
+import { QuizInterceptor } from '../services/quiz-interceptor.js';
+import type { AppConfig, CLIOptions } from '../types.js';
 import type { Activity } from './Activity.js';
 import type { Logger } from '../utils/logger.js';
 
@@ -13,13 +14,19 @@ const S = SELECTORS;
 export class ActivitySolving {
   private retakeCount = 0;
   private readonly insertableAudioContext: string[] = [];
+  private readonly interceptor: QuizInterceptor;
+  private readonly useApi: boolean;
 
   constructor(
     private readonly logger: Logger,
     private readonly page: Page,
     private readonly activity: Activity,
     private readonly config: AppConfig,
-  ) {}
+    options?: { noApi?: boolean },
+  ) {
+    this.useApi = !options?.noApi;
+    this.interceptor = new QuizInterceptor(logger);
+  }
 
   async resolveQuiz(): Promise<number> {
     this.logger.info('Resolving the quiz...');
@@ -185,12 +192,13 @@ export class ActivitySolving {
    * Navigate to the activity page and switch to the quiz tab.
    */
   private async loadActivityPageAndTab(): Promise<void> {
-    const currentUrl = this.page.url();
-    if (!currentUrl.startsWith(this.activity.url)) {
-      this.logger.debug(`Navigating to: ${this.activity.url}`);
-      await this.page.goto(this.activity.url, { waitUntil: 'domcontentloaded' });
-      await this.page.waitForLoadState('networkidle').catch(() => {});
-    }
+    // Start interceptor BEFORE navigation so it captures the quiz JSON
+    if (this.useApi) this.interceptor.startListening(this.page);
+
+    // Always navigate (even if URL matches) to trigger API response for interceptor
+    this.logger.debug(`Navigating to: ${this.activity.url}`);
+    await this.page.goto(this.activity.url, { waitUntil: 'domcontentloaded' });
+    await this.page.waitForLoadState('networkidle').catch(() => {});
 
     // Session check: if we got redirected to login, session expired
     const nowUrl = this.page.url();
@@ -286,33 +294,19 @@ export class ActivitySolving {
     if (question.skipCompletion) {
       answers = ['SKIP'];
     } else if (cached?.correctAnswer && !cached.cacheUsed) {
-      this.logger.info(`Using cached answer: ${JSON.stringify(cached.correctAnswer).slice(0, 100)}`);
+      this.logger.info(`[CACHE] ${JSON.stringify(cached.correctAnswer).slice(0, 100)}`);
       cached.cacheUsed = true;
       answers = cached.correctAnswer;
     } else {
-      // Build context: activity learning data + insertable page audio/text
-      const extraContext = this.insertableAudioContext.length > 0
-        ? this.insertableAudioContext.join('\n') + '\n\n'
-        : '';
-
-      // Also check for audio directly on the question
-      const audioTranscript = await transcribeAudioFromElement(
-        this.page, questionContainer, this.config, this.logger,
-      );
-      const audioPrefix = audioTranscript
-        ? `[Question audio transcription]: ${audioTranscript}\n\n`
-        : '';
-
-      const fullQuestion = `${extraContext}${audioPrefix}${questionStr}`;
-
-      this.logger.info('Waiting for AI response...');
-      answers = await getAiAnswer(
-        this.config, this.logger,
-        this.activity.asMarkdown(),
-        fullQuestion,
-        question.type,
-      );
-      this.logger.info(`AI answer: ${JSON.stringify(answers).slice(0, 150)}`);
+      // Priority 1: API intercepted answers (instant, 100% accurate)
+      const apiAnswer = this.useApi ? this.interceptor.getAnswer(questionStr) : null;
+      if (apiAnswer) {
+        this.logger.info(`[API] ${JSON.stringify(apiAnswer).slice(0, 150)}`);
+        answers = apiAnswer;
+      } else {
+        // Priority 2: AI fallback
+        answers = await this.askAi(questionStr, question.type, questionContainer);
+      }
     }
 
     // Submit and get correct answer
@@ -331,6 +325,17 @@ export class ActivitySolving {
         skipCompletion: question.skipCompletion,
       });
     }
+  }
+
+  private async askAi(questionStr: string, questionType: import('../types.js').QuestionType, container: import('playwright').Locator): Promise<string[]> {
+    const extra = this.insertableAudioContext.length > 0 ? this.insertableAudioContext.join('\n') + '\n\n' : '';
+    const audio = await transcribeAudioFromElement(this.page, container, this.config, this.logger);
+    const prefix = audio ? `[Audio]: ${audio}\n\n` : '';
+
+    this.logger.info('[AI] Waiting for response...');
+    const answers = await getAiAnswer(this.config, this.logger, this.activity.asMarkdown(), extra + prefix + questionStr, questionType);
+    this.logger.info(`[AI] ${JSON.stringify(answers).slice(0, 150)}`);
+    return answers;
   }
 
   private async clickNext(): Promise<void> {
