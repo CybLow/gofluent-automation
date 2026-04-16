@@ -109,7 +109,6 @@ export abstract class Question {
     if (correct && correct.length > 0) {
       return correct;
     }
-    this.logger.debug('Could not read correct answer from explanation, using submitted values');
     return values;
   }
 
