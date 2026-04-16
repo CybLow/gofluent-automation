@@ -155,6 +155,14 @@ export class QuizInterceptor {
   }
 
   private stripHtml(html: string): string {
-    return html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+    return html
+      .replace(/<[^>]+>/g, ' ')
+      .replaceAll('&amp;', '&')
+      .replaceAll('&lt;', '<')
+      .replaceAll('&gt;', '>')
+      .replaceAll('&quot;', '"')
+      .replaceAll('&#39;', "'")
+      .replaceAll(/\s+/g, ' ')
+      .trim();
   }
 }

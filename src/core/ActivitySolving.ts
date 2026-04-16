@@ -287,6 +287,9 @@ export class ActivitySolving {
     const questionStr = await question.asText();
     this.logger.debug(`Question: ${questionStr.slice(0, 120)}...`);
 
+    // Also get raw stem text from DOM for better API matching
+    const rawStem = await questionContainer.locator(S.QUIZ.STEM).first().textContent().catch(() => null);
+
     // Check cache
     const cached = this.activity.getQuestion(questionStr);
     let answers: string[];
@@ -298,8 +301,10 @@ export class ActivitySolving {
       cached.cacheUsed = true;
       answers = cached.correctAnswer;
     } else {
-      // Priority 1: API intercepted answers (instant, 100% accurate)
-      const apiAnswer = this.useApi ? this.interceptor.getAnswer(questionStr) : null;
+      // Priority 1: API intercepted answers — try both formatted and raw stem
+      const apiAnswer = this.useApi
+        ? (this.interceptor.getAnswer(questionStr) ?? (rawStem ? this.interceptor.getAnswer(rawStem) : null))
+        : null;
       if (apiAnswer) {
         this.logger.info(`[API] ${JSON.stringify(apiAnswer).slice(0, 150)}`);
         answers = apiAnswer;
