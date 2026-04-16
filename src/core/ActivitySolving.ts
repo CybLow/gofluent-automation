@@ -404,12 +404,11 @@ export class ActivitySolving {
     this.logger.info(`Score ${score}% < ${expectedScore}%, retaking (${this.retakeCount}/${maxRetakes})`);
     try {
       await this.page.locator(S.QUIZ.RETAKE).click();
-      // Wait for quiz to reset (start button or first content appears)
-      await Promise.race([
-        this.page.locator(S.QUIZ.START).waitFor({ state: 'visible', timeout: 5_000 }),
-        this.page.locator(S.QUIZ.QUESTION).waitFor({ state: 'visible', timeout: 5_000 }),
-        this.page.locator(S.QUIZ.INSERTABLE_PAGE).waitFor({ state: 'visible', timeout: 5_000 }),
-      ]).catch(() => {});
+      // Wait for end page to disappear (quiz is resetting)
+      await this.page.locator(S.QUIZ.END_PAGE).waitFor({ state: 'hidden', timeout: 5_000 }).catch(() => {});
+      await this.page.locator(S.QUIZ.SCORE).waitFor({ state: 'hidden', timeout: 5_000 }).catch(() => {});
+      // Then wait for first quiz content
+      await this.waitForQuizContent();
       await this.resolveQuiz();
     } catch (e) {
       this.logger.error(`Retake failed: ${e}`);
