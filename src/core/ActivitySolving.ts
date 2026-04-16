@@ -27,11 +27,9 @@ export class ActivitySolving {
   async resolveQuiz(): Promise<number> {
     this.logger.info('Resolving the quiz...');
     for (const q of this.activity.questions) q.cacheUsed = false;
-    if (this.retakeCount === 0) {
-      this.interceptor.resetForNewActivity(); // New activity → clear old answers
-    } else {
-      this.interceptor.resetIndex(); // Retake → reuse same answers from index 0
-    }
+    // Always reset — new activity clears answers, retake also clears because
+    // loadActivityPageAndTab triggers a new API response that rebuilds the list
+    this.interceptor.resetForNewActivity();
 
     const ready = await this.initQuiz();
     if (ready === 'already_done') return this.activity.questions.length;
@@ -285,25 +283,24 @@ export class ActivitySolving {
     const questionStr = await question.asText();
     this.logger.debug(`Question: ${questionStr.slice(0, 120)}...`);
 
+    // Always consume API index to stay in sync (even for skipped/cached questions)
+    const apiAnswer = this.useApi ? this.interceptor.getNextAnswer() : null;
+
     const cached = this.activity.getQuestion(questionStr);
     let answers: string[];
 
-    if (question.skipCompletion) {
-      answers = ['SKIP'];
-    } else if (cached?.correctAnswer && !cached.cacheUsed) {
+    if (cached?.correctAnswer && !cached.cacheUsed) {
       this.logger.info(`[CACHE] ${JSON.stringify(cached.correctAnswer).slice(0, 100)}`);
       cached.cacheUsed = true;
       answers = cached.correctAnswer;
+    } else if (apiAnswer) {
+      this.logger.info(`[API] ${JSON.stringify(apiAnswer).slice(0, 150)}`);
+      answers = apiAnswer;
+    } else if (question.skipCompletion) {
+      answers = ['SKIP'];
     } else {
-      // Priority 1: API answer by index (instant, 100% accurate)
-      const apiAnswer = this.useApi ? this.interceptor.getNextAnswer() : null;
-      if (apiAnswer) {
-        this.logger.info(`[API] ${JSON.stringify(apiAnswer).slice(0, 150)}`);
-        answers = apiAnswer;
-      } else {
-        // Priority 2: AI fallback
-        answers = await this.askAi(questionStr, question.type, questionContainer);
-      }
+      // AI fallback
+      answers = await this.askAi(questionStr, question.type, questionContainer);
     }
 
     // Submit and get correct answer
