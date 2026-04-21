@@ -27,7 +27,7 @@ export async function buildContainer(parsed: ParsedCli): Promise<Bootstrapped> {
   const logger: ILogger = new Logger(paths.LOGS_DIR, parsed.common.debug);
   const config = new EnvAppConfig(parsed.common.profile);
 
-  const tokenCache = new FileTokenCache(paths.SESSION_PATH, logger);
+  const tokenCache = new FileTokenCache(paths.sessionPath(parsed.common.profile), logger);
   const browserLauncher = new PlaywrightLauncher(logger);
   const authService = new AuthService(config, tokenCache, browserLauncher, logger);
   const { token, userId } = await authService.authenticate();
@@ -60,7 +60,7 @@ function buildRunner(
     return new SimpleRunner(quiz, logger, parsed.simple);
   }
   if (!parsed.auto) throw new Error('Missing auto-run options');
-  const urlCache = new FileUrlCacheRepo(paths.URL_CACHE_PATH);
+  const urlCache = new FileUrlCacheRepo(paths.urlCachePath(parsed.common.profile));
   const discovery = new ApiActivityDiscovery(api, topicUuid, logger);
   const quiz = new QuizSolver(api, topicUuid, logger, questionDelayMs);
   return new AutoRunner(training, discovery, quiz, urlCache, siteBase, logger, parsed.auto);
