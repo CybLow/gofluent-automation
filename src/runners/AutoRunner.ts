@@ -67,7 +67,7 @@ export class AutoRunner implements IRunner {
 
   private async runSolveLoop(excluded: Set<string>, todoCount: number): Promise<void> {
     const categories = this.selectCategories();
-    const progress = new ProgressTracker(todoCount);
+    const progress = new ProgressTracker(todoCount, this.options.debug);
     this.logger.info(progress.renderHeader(categories, BATCH_SIZE));
     console.log('');
 
