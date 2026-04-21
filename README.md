@@ -31,25 +31,25 @@ bun src/index.ts --auto-run 13 --debug                 # logs verbeux
 
 ### Options
 
-| Flag | Description |
-|------|-------------|
-| `--auto-run <N>` | Faire N nouvelles activites (defaut 13, voir `GOFLUENT_MONTHLY_TARGET`) |
-| `--simple-run <URL\|UUID>` | Faire une activite precise |
-| `--report` | Rapport de formation (scores, stats, historique) |
-| `--vocabulary` | Categorie vocabulaire |
-| `--grammar` | Categorie grammaire |
-| `--article` | Categorie articles |
-| `--video` | Categorie videos |
-| `--howto` | Categorie guides pratiques |
-| `--language <nom>` | Langue (defaut: Anglais) |
-| `--minimum-level <A1-C2>` | Niveau CEFR minimum |
-| `--maximum-level <A1-C2>` | Niveau CEFR maximum |
-| `--no-cache` | Ignorer le cache d'URLs deja faites |
-| `--no-headless` | Afficher la fenetre du browser a l'auth (utile pour debug MFA) |
-| `--profile <nom>` | Profil de credentials (voir ci-dessous) |
+| Flag                       | Description                                                                          |
+|----------------------------|--------------------------------------------------------------------------------------|
+| `--auto-run <N>`           | Faire N nouvelles activites (defaut 13, voir `GOFLUENT_MONTHLY_TARGET`)              |
+| `--simple-run <URL\|UUID>` | Faire une activite precise                                                           |
+| `--report`                 | Rapport de formation (scores, stats, historique)                                     |
+| `--vocabulary`             | Categorie vocabulaire                                                                |
+| `--grammar`                | Categorie grammaire                                                                  |
+| `--article`                | Categorie articles                                                                   |
+| `--video`                  | Categorie videos                                                                     |
+| `--howto`                  | Categorie guides pratiques                                                           |
+| `--language <nom>`         | Langue (defaut: Anglais)                                                             |
+| `--minimum-level <A1-C2>`  | Niveau CEFR minimum                                                                  |
+| `--maximum-level <A1-C2>`  | Niveau CEFR maximum                                                                  |
+| `--no-cache`               | Ignorer le cache d'URLs deja faites                                                  |
+| `--no-headless`            | Afficher la fenetre du browser a l'auth (utile pour debug MFA)                       |
+| `--profile <nom>`          | Profil de credentials (voir ci-dessous)                                              |
 | `--activity-delay <duree>` | Pause entre activites en mode `--auto-run`, ex `500ms`, `30s`, `2m`, `1h` (defaut 0) |
-| `--question-delay <duree>` | Pause entre questions dans un quiz, meme syntaxe (defaut 0) |
-| `--debug` | Logs verbeux (GET/POST, states) |
+| `--question-delay <duree>` | Pause entre questions dans un quiz, meme syntaxe (defaut 0)                          |
+| `--debug`                  | Logs verbeux (GET/POST, states)                                                      |
 
 ### Unites pour les delays
 
